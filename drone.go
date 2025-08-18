@@ -63,10 +63,12 @@ type Drone struct {
 }
 
 type PIDController struct {
-	Kp, Ki, Kd    float64
-	Integral      float64
-	LastError     float64
-	OutputLimit   float64
+    Kp, Ki, Kd    float64
+    Integral      float64
+    LastError     float64
+    OutputLimit   float64
+    LastDerivative float64
+    LastOutput     float64
 }
 
 func NewDrone() *Drone {
@@ -401,11 +403,11 @@ func (d *Drone) updateSafetySystems() {
 // PID controller update
 func (d *Drone) updatePIDController(pid *PIDController, setpoint, current float64, dt float64) float64 {
     error := setpoint - current
-	
-	pid.Integral += error * dt
-	derivative := (error - pid.LastError) / dt
-	
-	output := pid.Kp*error + pid.Ki*pid.Integral + pid.Kd*derivative
+
+    pid.Integral += error * dt
+    derivative := (error - pid.LastError) / dt
+
+    output := pid.Kp*error + pid.Ki*pid.Integral + pid.Kd*derivative
 	
 	// Apply output limits
 	if output > pid.OutputLimit {
@@ -415,7 +417,9 @@ func (d *Drone) updatePIDController(pid *PIDController, setpoint, current float6
 		output = -pid.OutputLimit
 	}
 	
-	pid.LastError = error
+    pid.LastError = error
+    pid.LastDerivative = derivative
+    pid.LastOutput = output
     return output
 }
 
