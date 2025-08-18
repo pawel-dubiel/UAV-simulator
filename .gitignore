@@ -13,6 +13,9 @@
 /dist/
 /out/
 
+# Vendor (we don't vendor in this repo)
+vendor/
+
 # Go caches and workspaces
 .gocache/
 .gomodcache/
