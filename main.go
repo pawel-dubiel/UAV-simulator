@@ -37,12 +37,15 @@ func main() {
 		log.Fatal("Failed to initialize OpenGL:", err)
 	}
 
-	gl.Viewport(0, 0, 1024, 768)
-	gl.Enable(gl.DEPTH_TEST)
-	gl.DepthFunc(gl.LESS)
-	gl.Disable(gl.CULL_FACE)
-	gl.PolygonMode(gl.FRONT_AND_BACK, gl.FILL)
-	gl.ClearColor(0.5, 0.7, 0.9, 1.0)  // Sky blue background
+    gl.Viewport(0, 0, 1024, 768)
+    gl.Enable(gl.DEPTH_TEST)
+    gl.DepthFunc(gl.LESS)
+    gl.Disable(gl.CULL_FACE)
+    gl.PolygonMode(gl.FRONT_AND_BACK, gl.FILL)
+    gl.ClearColor(0.5, 0.7, 0.9, 1.0)  // Sky blue background
+    // Enable blending for UI overlay transparency
+    gl.Enable(gl.BLEND)
+    gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
 	
 	fmt.Printf("OpenGL version: %s\n", gl.GoStr(gl.GetString(gl.VERSION)))
 	fmt.Printf("GLSL version: %s\n", gl.GoStr(gl.GetString(gl.SHADING_LANGUAGE_VERSION)))
