@@ -317,13 +317,15 @@ func (s *Simulator) renderUI(width, height int) {
     // Air density (RHO), hover throttle approximation, power caps
     s.ui.DrawText(x, y, "RHO "+fmt2(s.drone.AirDensity), scaleBody, Color{0.9, 1, 1, 1}); y += lineHeight
     hov := int(s.drone.HoverThrottlePercent()+0.5)
-    s.ui.DrawText(x, y, "TH HOV "+itoa(hov)+"%  PWR MAX "+itoa(int(s.drone.MaxPower+0.5))+"W HOV "+itoa(int(s.drone.HoverPower+0.5))+"W", scaleBody, Color{1, 0.95, 0.9, 1}); y += lineHeight
+    s.ui.DrawText(x, y, "TH HOV "+itoa(hov)+"%", scaleBody, Color{1, 0.95, 0.9, 1}); y += lineHeight
+    s.ui.DrawText(x, y, "PWR MAX "+itoa(int(s.drone.MaxPower+0.5))+"W  HOV "+itoa(int(s.drone.HoverPower+0.5))+"W", scaleBody, Color{1, 0.95, 0.9, 1}); y += lineHeight
     wx := int(s.drone.WindVelocity.X + 0.5)
     wy := int(s.drone.WindVelocity.Y + 0.5)
     wz := int(s.drone.WindVelocity.Z + 0.5)
     s.ui.DrawText(x, y, "WIND X "+itoa(wx)+" Y "+itoa(wy)+" Z "+itoa(wz), scaleBody, Color{0.85, 1, 0.95, 1}); y += lineHeight
     // Limits and targets
-    s.ui.DrawText(x, y, "LIM HSPD "+itoa(int(s.drone.MaxSpeed+0.5))+"  VSPD "+itoa(int(s.drone.MaxVerticalSpeed+0.5))+"  ALT "+itoa(int(s.drone.MaxAltitude+0.5)), scaleBody, Color{1, 0.9, 1, 1}); y += lineHeight
+    s.ui.DrawText(x, y, "LIM H "+itoa(int(s.drone.MaxSpeed+0.5))+"  V "+itoa(int(s.drone.MaxVerticalSpeed+0.5)), scaleBody, Color{1, 0.9, 1, 1}); y += lineHeight
+    s.ui.DrawText(x, y, "LIM ALT "+itoa(int(s.drone.MaxAltitude+0.5)), scaleBody, Color{1, 0.9, 1, 1}); y += lineHeight
     if s.drone.FlightMode == FlightModeAltitudeHold || s.drone.FlightMode == FlightModeHover {
         s.ui.DrawText(x, y, "ALT TGT "+itoa(int(s.drone.AltitudeHold+0.5)), scaleBody, Color{0.95, 1, 0.95, 1}); y += lineHeight
     }
@@ -336,13 +338,15 @@ func (s *Simulator) renderUI(width, height int) {
     r1 := int(s.drone.PropSpeeds[1] + 0.5)
     r2 := int(s.drone.PropSpeeds[2] + 0.5)
     r3 := int(s.drone.PropSpeeds[3] + 0.5)
-    s.ui.DrawText(x, y, "PROP "+itoa(r0)+" "+itoa(r1)+" "+itoa(r2)+" "+itoa(r3), scaleBody, Color{1, 0.9, 0.9, 1}); y += lineHeight
+    s.ui.DrawText(x, y, "PROP 0/1 "+itoa(r0)+" "+itoa(r1), scaleBody, Color{1, 0.9, 0.9, 1}); y += lineHeight
+    s.ui.DrawText(x, y, "PROP 2/3 "+itoa(r2)+" "+itoa(r3), scaleBody, Color{1, 0.9, 0.9, 1}); y += lineHeight
     // Motor temps
     t0 := int(s.drone.MotorTempC[0] + 0.5)
     t1 := int(s.drone.MotorTempC[1] + 0.5)
     t2 := int(s.drone.MotorTempC[2] + 0.5)
     t3 := int(s.drone.MotorTempC[3] + 0.5)
-    s.ui.DrawText(x, y, "TEMP "+itoa(t0)+"C "+itoa(t1)+"C "+itoa(t2)+"C "+itoa(t3)+"C", scaleBody, Color{1, 0.85, 0.85, 1}); y += lineHeight
+    s.ui.DrawText(x, y, "TEMP 0/1 "+itoa(t0)+"C "+itoa(t1)+"C", scaleBody, Color{1, 0.85, 0.85, 1}); y += lineHeight
+    s.ui.DrawText(x, y, "TEMP 2/3 "+itoa(t2)+"C "+itoa(t3)+"C", scaleBody, Color{1, 0.85, 0.85, 1}); y += lineHeight
     // Camera parameters
     switch s.camera.Mode {
     case CameraModeFollow:
