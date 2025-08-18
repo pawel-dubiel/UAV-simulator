@@ -1,0 +1,60 @@
+# Go - build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Common output folders
+/bin/
+/build/
+/dist/
+/out/
+
+# Go caches and workspaces
+.gocache/
+.gomodcache/
+go.work
+go.work.sum
+
+# Coverage and profiling
+coverage*.out
+coverage/
+profile*.out
+cpu.out
+mem.out
+pprof/
+*.pprof
+
+# Logs and temp files
+*.log
+*.tmp
+tmp/
+*.bak
+*.orig
+
+# Editors/IDEs
+.vscode/
+.idea/
+*.iml
+*.sw?
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.Spotlight-V100
+.Trashes
+
+# Env files (secrets)
+.env
+.env.*
+
+# Project-specific binaries
+/drone-simulator
+/test_triangle
