@@ -216,12 +216,15 @@ func (s *Simulator) render(window *glfw.Window) {
 func (s *Simulator) renderUI(width, height int) {
     panelWidth := 360 // pixels
     scaleHeader := 4
-    scaleBody := 3
+    scaleBody := 2
     lineHeight := 8 * scaleBody // 7px font + spacing
     x := 12
     y := 16
     // Draw UI on top of depth by disabling depth test temporarily
     gl.Disable(gl.DEPTH_TEST)
+    // Clip all HUD content to the panel bounds
+    gl.Enable(gl.SCISSOR_TEST)
+    gl.Scissor(0, 0, int32(panelWidth), int32(height))
     s.ui.Begin(width, height)
     // Panel background
     s.ui.AddRect(0, 0, panelWidth, height, Color{0, 0, 0, 0.45})
@@ -355,6 +358,7 @@ func (s *Simulator) renderUI(width, height int) {
     s.ui.DrawText(x, y, "PID ALT OUT "+fmt2(s.drone.AltitudePID.LastOutput), scaleBody, Color{0.95, 1, 0.95, 1}); y += lineHeight
 
     s.ui.Flush()
+    gl.Disable(gl.SCISSOR_TEST)
     gl.Enable(gl.DEPTH_TEST)
 }
 
