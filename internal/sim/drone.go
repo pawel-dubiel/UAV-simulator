@@ -213,6 +213,37 @@ func (d *Drone) Update(dt float64) {
 	d.Velocity.Z = sanitizeFinite(d.Velocity.Z)
 }
 
+// groundClearance returns the projected half-height of the oriented bounding box
+// onto world up (Y), accounting for current pitch/roll. This prevents corners
+// from sinking below ground when the drone tilts.
+func (d *Drone) groundClearance() float64 {
+    // Local half-extents mapped to world axes: X=length, Y=height, Z=width
+    ex := d.Dimensions.X * 0.5
+    ey := d.Dimensions.Z * 0.5 // height mapped to local Y
+    ez := d.Dimensions.Y * 0.5
+
+    // Euler order: Yaw (Y), then Pitch (X), then Roll (Z)
+    pitch := d.Rotation.X
+    roll := d.Rotation.Z
+
+    cp := math.Cos(pitch)
+    sp := math.Sin(pitch)
+    sr := math.Sin(roll)
+    cr := math.Cos(roll)
+
+    // World Y components of local axes after rotation (see derivation):
+    rightY := cp * sr      // local X axis Y-projection
+    upY := cp * cr         // local Y axis Y-projection
+    fwdY := -sp            // local Z axis Y-projection
+
+    clearance := math.Abs(rightY)*ex + math.Abs(upY)*ey + math.Abs(fwdY)*ez
+    // Small padding to avoid z-fighting with ground plane
+    if clearance < 0 {
+        clearance = 0
+    }
+    return clearance
+}
+
 // Realistic throttle control (0-100%)
 func (d *Drone) SetThrottle(throttlePercent float64) {
 	if throttlePercent < 0 {
@@ -325,8 +356,8 @@ func (d *Drone) updatePowerSystem(dt float64) {
 
 // Check ground contact
 func (d *Drone) updateGroundContact() {
-	groundLevel := d.Dimensions.Z / 2.0 // Half of drone height
-	d.OnGround = d.Position.Y <= groundLevel && math.Abs(d.Velocity.Y) < 0.1
+    groundLevel := d.groundClearance()
+    d.OnGround = d.Position.Y <= groundLevel && math.Abs(d.Velocity.Y) < 0.1
 }
 
 // Update air density with altitude
@@ -374,12 +405,12 @@ func (d *Drone) calculateAltitudeCorrection(dt float64) float64 {
 
 // Ground collision handling
 func (d *Drone) handleGroundCollision() {
-	groundLevel := d.Dimensions.Z / 2.0
-	if d.Position.Y < groundLevel {
-		d.Position.Y = groundLevel
+    groundLevel := d.groundClearance()
+    if d.Position.Y < groundLevel {
+        d.Position.Y = groundLevel
 
-		// Absorb landing impact
-		if d.Velocity.Y < -2.0 {
+        // Absorb landing impact
+        if d.Velocity.Y < -2.0 {
 			// Hard landing - potential damage
 			d.Velocity.Y = 0
 		} else if d.Velocity.Y < 0 {

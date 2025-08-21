@@ -9,10 +9,11 @@
 ## Build, Test, and Development Commands
 - `go mod tidy`: Sync dependencies.
 - `go build -o drone-simulator .`: Build local binary (ignored by Git).
-- `go run .`: Run the simulator with OpenGL window.
+- `go run .`: Run the simulator (decoupled render/physics by default).
 - `go test ./...`: Run all unit tests.
 - `go test -cover ./...`: Run tests with coverage.
 - `go vet ./...`: Static checks for common issues.
+ - Legacy loop (if needed): `go run . -decoupled=false`
 
 ## Coding Style & Naming Conventions
 - Use `go fmt ./...` before committing; standard Go formatting (tabs, imports grouped).

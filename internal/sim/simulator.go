@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"time"
+	"sync"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/glfw/v3.3/glfw"
@@ -26,6 +27,8 @@ type Simulator struct {
 	fpsIdx     int
 	uiVisible  bool
 	swarm      *Swarm
+
+	mu         sync.RWMutex
 }
 
 func (s *Simulator) activeDrone() *Drone {
@@ -200,6 +203,70 @@ func (s *Simulator) Run(window *glfw.Window) {
 	}
 }
 
+// RunDecoupled runs physics in a fixed-rate goroutine and renders on the main thread.
+// This reduces jitter and lets rendering fluctuate independently of simulation UPS.
+func (s *Simulator) RunDecoupled(window *glfw.Window) {
+    s.input.SetupCallbacks(window)
+
+    fmt.Println("=== REALISTIC DRONE FLIGHT SIMULATOR (decoupled) ===")
+    fmt.Printf("Aircraft: Consumer Quadcopter (%.0fg)\n", s.activeDrone().Mass*1000)
+
+    target := time.Second / 120 // 120 Hz physics
+    stop := make(chan struct{})
+    // Physics loop
+    go func() {
+        ticker := time.NewTicker(target)
+        defer ticker.Stop()
+        for {
+            select {
+            case <-ticker.C:
+                s.mu.Lock()
+                s.update(target.Seconds())
+                s.mu.Unlock()
+            case <-stop:
+                return
+            }
+        }
+    }()
+
+    telemetryTimer := 0.0
+    prev := time.Now()
+
+    for !window.ShouldClose() {
+        now := time.Now()
+        frame := now.Sub(prev)
+        prev = now
+        dtFrame := frame.Seconds()
+
+        // FPS smoothing and history
+        s.lastDt = dtFrame
+        if dtFrame > 0 {
+            currentFPS := 1.0 / dtFrame
+            s.fps = s.fps*0.9 + currentFPS*0.1
+        }
+        s.fpsHistory[s.fpsIdx] = s.fps
+        s.fpsIdx = (s.fpsIdx + 1) % len(s.fpsHistory)
+
+        // Apply input under exclusive lock to avoid races with physics
+        s.mu.Lock()
+        s.processInput(target.Seconds())
+        s.mu.Unlock()
+
+        s.renderInterpolated(window, 0)
+
+        telemetryTimer += dtFrame
+        if telemetryTimer >= 2.0 {
+            s.displayTelemetry()
+            telemetryTimer = 0.0
+        }
+
+        window.SwapBuffers()
+        glfw.PollEvents()
+    }
+
+    close(stop)
+}
+
 func (s *Simulator) displayTelemetry() {
 	drone := s.activeDrone()
 	camera := s.camera
@@ -337,7 +404,8 @@ func (s *Simulator) render(window *glfw.Window) {
 
 // Render with interpolation factor alpha in [0,1]
 func (s *Simulator) renderInterpolated(window *glfw.Window, alpha float64) {
-	gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+    s.mu.RLock()
+    gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
 	width, height := window.GetFramebufferSize()
 	gl.Viewport(0, 0, int32(width), int32(height))
@@ -359,9 +427,10 @@ func (s *Simulator) renderInterpolated(window *glfw.Window, alpha float64) {
 		s.renderer.RenderDrone()
 	}
 
-	if s.uiVisible {
-		s.renderUI(width, height)
-	}
+    if s.uiVisible {
+        s.renderUI(width, height)
+    }
+    s.mu.RUnlock()
 }
 
 // RunHeadless executes fixed-step updates without creating a window.

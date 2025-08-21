@@ -24,7 +24,8 @@ func main() {
 	headless := flag.Bool("headless", false, "Run without a window for benchmarking")
 	steps := flag.Int("steps", 0, "Number of fixed updates to run in headless mode (0 = use duration)")
 	duration := flag.Duration("duration", 0, "How long to run in headless mode (e.g., 5s); ignored if steps > 0")
-	ups := flag.Int("ups", 120, "Fixed updates per second in headless mode")
+    ups := flag.Int("ups", 120, "Fixed updates per second in headless mode")
+    decoupled := flag.Bool("decoupled", true, "Run decoupled simulation/render loops (default true; pass -decoupled=false for legacy loop)")
 	arm := flag.Bool("arm", true, "Auto-arm drones in headless mode")
 	flag.Parse()
 
@@ -87,6 +88,10 @@ func main() {
 	fmt.Printf("OpenGL version: %s\n", gl.GoStr(gl.GetString(gl.VERSION)))
 	fmt.Printf("GLSL version: %s\n", gl.GoStr(gl.GetString(gl.SHADING_LANGUAGE_VERSION)))
 
-	simulator := sim.NewSimulator()
-	simulator.Run(window)
+    simulator := sim.NewSimulator()
+    if *decoupled {
+        simulator.RunDecoupled(window)
+    } else {
+        simulator.Run(window)
+    }
 }

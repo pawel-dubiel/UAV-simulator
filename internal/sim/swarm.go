@@ -75,12 +75,12 @@ func (s *Swarm) Update(dt float64) {
 	followers := count - 1
 	rank := 0
 	// Controller gains (sane base)
-	kpPos := 0.8 // m -> m/s^2
-	kdVel := 1.2 // (m/s) -> m/s^2
-	kpAtt := 8.0 // rad error -> torque units
-	kdAtt := 3.0 // rad/s damping
-	kpYaw := 2.0
-	kdYaw := 0.8
+    kpPos := 0.8  // m -> m/s^2
+    kdVel := 1.2  // (m/s) -> m/s^2
+    kpAtt := 4.0  // reduced attitude P to avoid flips
+    kdAtt := 3.0  // rad/s damping
+    kpYaw := 1.2  // gentler yaw coupling
+    kdYaw := 0.8
 	g := 9.81
 	base := leader.Position
 	lvel := leader.Velocity
@@ -128,39 +128,56 @@ func (s *Swarm) Update(dt float64) {
 		ez := targetPos.Z - follower.Position.Z
 		vxRel := follower.Velocity.X - lvel.X
 		vzRel := follower.Velocity.Z - lvel.Z
-		ax := kpPos*ex - kdVel*vxRel
-		az := kpPos*ez - kdVel*vzRel
+        ax := kpPos*ex - kdVel*vxRel
+        az := kpPos*ez - kdVel*vzRel
+        // Limit commanded acceleration to avoid aggressive tilts
+        maxAcc := 3.0
+        if ax > maxAcc { ax = maxAcc } else if ax < -maxAcc { ax = -maxAcc }
+        if az > maxAcc { az = maxAcc } else if az < -maxAcc { az = -maxAcc }
 		// Convert desired acceleration to small-angle tilt targets
 		pitchTarget := clamp(-math.Atan2(az, g), -10*math.Pi/180, 10*math.Pi/180)
 		rollTarget := clamp(math.Atan2(ax, g), -10*math.Pi/180, 10*math.Pi/180)
 
 		// Attitude PD tracking for pitch/roll
-		torqueX := kpAtt*(pitchTarget-follower.Rotation.X) - kdAtt*follower.AngularVel.X
-		torqueZ := kpAtt*(rollTarget-follower.Rotation.Z) - kdAtt*follower.AngularVel.Z
+        torqueX := kpAtt*(pitchTarget-follower.Rotation.X) - kdAtt*follower.AngularVel.X
+        torqueZ := kpAtt*(rollTarget-follower.Rotation.Z) - kdAtt*follower.AngularVel.Z
 		// Align roll/pitch with leader attitude (leader typically level)
 		kAlignAtt := 2.0
 		torqueX += kAlignAtt * (lpitch - follower.Rotation.X)
 		torqueZ += kAlignAtt * (lroll - follower.Rotation.Z)
 		// Align yaw with leader
-		yawErr := angleDiff(lyaw, follower.Rotation.Y)
-		yawTorque := kpYaw*yawErr - kdYaw*follower.AngularVel.Y
+        yawErr := angleDiff(lyaw, follower.Rotation.Y)
+        yawTorque := kpYaw*yawErr - kdYaw*follower.AngularVel.Y
 		// Additional gate: require follower to have some altitude clearance before allowing lateral control
 		followerClear := !follower.OnGround && (follower.Position.Y > follower.Dimensions.Z/2.0+0.2)
 		active := allowFormation && followerClear
-		// If formation is not yet allowed or follower lacks clearance, keep calm and avoid lateral/yaw commands
-		if !active {
-			torqueX = 0
-			torqueZ = 0
-			yawTorque = 0
-			// Light lateral damping to prevent drift
-			follower.Velocity.X *= 0.95
-			follower.Velocity.Z *= 0.95
-		}
-		// Disable lateral torques while on ground to avoid skittering
-		if follower.OnGround {
-			torqueX = 0
-			torqueZ = 0
-		}
+        // Additional altitude-based scaling to avoid tipping on/near ground
+        agl := follower.Position.Y - follower.groundClearance()
+        attScale := clamp((agl-0.05)/0.35, 0.0, 1.0)
+        if attScale < 0 { attScale = 0 }
+        torqueX *= attScale
+        torqueZ *= attScale
+        yawTorque *= clamp(attScale*1.2, 0.0, 1.0)
+
+        // If formation is not yet allowed or follower lacks clearance, keep calm and avoid lateral/yaw commands
+        if !active {
+            torqueX = 0
+            torqueZ = 0
+            yawTorque = 0
+            // Light lateral damping to prevent drift
+            follower.Velocity.X *= 0.95
+            follower.Velocity.Z *= 0.95
+        }
+        // Disable lateral torques while on ground to avoid skittering
+        if follower.OnGround {
+            torqueX = 0
+            torqueZ = 0
+        }
+        // Saturate torques to avoid violent angular accelerations
+        tMax := 0.35
+        if torqueX > tMax { torqueX = tMax } else if torqueX < -tMax { torqueX = -tMax }
+        if torqueZ > tMax { torqueZ = tMax } else if torqueZ < -tMax { torqueZ = -tMax }
+        if yawTorque > 0.25 { yawTorque = 0.25 } else if yawTorque < -0.25 { yawTorque = -0.25 }
 		follower.AddTorque(Vec3{X: torqueX, Y: yawTorque, Z: torqueZ}, dt)
 		// Gentle clamp toward slot and velocity damping when far
 		delta := follower.Position.Sub(targetPos)
