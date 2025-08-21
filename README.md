@@ -1,5 +1,7 @@
 # 3D Drone Simulator
 
+[![CI](https://github.com/pawel-dubiel/UAV-simulator/actions/workflows/ci.yml/badge.svg)](https://github.com/pawel-dubiel/UAV-simulator/actions/workflows/ci.yml)
+
 A 3D drone simulator written in Go using OpenGL for rendering and realistic physics simulation.
 
 ## Features
