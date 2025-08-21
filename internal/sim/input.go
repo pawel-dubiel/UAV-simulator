@@ -155,6 +155,36 @@ func (i *InputHandler) ProcessInput(drone *Drone, camera *Camera, dt float64) {
 		drone.SetThrottle(drone.HoverThrottlePercent()) // Hover throttle
 	}
 
+	// Engine failure/derate toggles for quick testing (F5..F8 for engines 0..3)
+	cycle := func(idx int) {
+		if idx < 0 || idx >= len(drone.Engines) {
+			return
+		}
+		e := drone.Engines[idx]
+		if !e.Functional || e.Efficiency <= 0.01 {
+			// Repair to 100%
+			drone.RepairEngine(idx)
+			return
+		}
+		if e.Efficiency >= 0.99 {
+			// Derate to 50%
+			drone.SetEngineEfficiency(idx, 0.5)
+			return
+		}
+		// Fail engine
+		drone.FailEngine(idx)
+	}
+	if i.WasKeyPressed(glfw.KeyF5) { cycle(0) }
+	if i.WasKeyPressed(glfw.KeyF6) { cycle(1) }
+	if i.WasKeyPressed(glfw.KeyF7) { cycle(2) }
+	if i.WasKeyPressed(glfw.KeyF8) { cycle(3) }
+	// F9 repairs all
+	if i.WasKeyPressed(glfw.KeyF9) {
+		for idx := range drone.Engines {
+			drone.RepairEngine(idx)
+		}
+	}
+
 	// Quick throttle presets (only when armed)
 	if drone.IsArmed {
 		if i.WasKeyPressed(glfw.KeyZ) {

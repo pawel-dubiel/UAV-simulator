@@ -4,10 +4,11 @@
 package sim
 
 import (
-	"fmt"
-	"strconv"
-	"time"
-	"sync"
+    "fmt"
+    "strconv"
+    "time"
+    "sync"
+    "math"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/glfw/v3.3/glfw"
@@ -357,16 +358,76 @@ func (s *Simulator) processInput(dt float64) {
 }
 
 func (s *Simulator) update(dt float64) {
-	// Swarm control influences followers
-	if s.swarm != nil {
-		s.swarm.Update(dt)
-	}
-	// Physics update for all drones
-	for _, d := range s.drones {
-		d.Update(dt)
-	}
-	// Camera tracks the selected drone
-	s.camera.Update(s.activeDrone())
+    // Swarm control influences followers
+    if s.swarm != nil {
+        s.swarm.Update(dt)
+    }
+    // Physics update for all drones
+    for _, d := range s.drones {
+        d.Update(dt)
+    }
+    // Resolve simple inter-drone collisions (sphere-sphere)
+    s.resolveDroneCollisions()
+    // Camera tracks the selected drone
+    s.camera.Update(s.activeDrone())
+}
+
+// resolveDroneCollisions performs a simple sphere-sphere collision resolution
+// between drones to prevent interpenetration and reduce explosive overlaps.
+// It adjusts positions to remove penetration and applies a normal impulse
+// with small restitution. O(N^2) for small swarms.
+func (s *Simulator) resolveDroneCollisions() {
+    n := len(s.drones)
+    if n < 2 { return }
+    restitution := 0.1 // slightly bouncy
+    for i := 0; i < n; i++ {
+        a := s.drones[i]
+        ra := droneRadius(a)
+        for j := i + 1; j < n; j++ {
+            b := s.drones[j]
+            rb := droneRadius(b)
+            // Horizontal-plane distance; allow slight vertical overlap tolerance
+            delta := b.Position.Sub(a.Position)
+            dist := delta.Length()
+            minDist := ra + rb
+            if dist <= 1e-6 {
+                // Prevent division by zero; nudge apart along x
+                delta = Vec3{X: minDist, Y: 0, Z: 0}
+                dist = minDist
+            }
+            if dist < minDist {
+                // Normalize normal
+                nrm := delta.Mul(1.0 / dist)
+                penetration := minDist - dist
+                // Positional correction: move both half the penetration
+                corr := nrm.Mul(0.5 * penetration)
+                a.Position = a.Position.Sub(corr)
+                b.Position = b.Position.Add(corr)
+
+                // Relative velocity along normal
+                relV := (b.Velocity.Sub(a.Velocity)).Dot(nrm)
+                if relV < 0 { // approaching
+                    invMassA := 1.0 / a.Mass
+                    invMassB := 1.0 / b.Mass
+                    j := -(1.0 + restitution) * relV / (invMassA + invMassB)
+                    impulse := nrm.Mul(j)
+                    a.Velocity = a.Velocity.Sub(impulse.Mul(invMassA))
+                    b.Velocity = b.Velocity.Add(impulse.Mul(invMassB))
+                }
+                // Apply damage based on approach speed magnitude
+                speed := math.Abs(relV)
+                a.applyCollisionDamage(speed)
+                b.applyCollisionDamage(speed)
+            }
+        }
+    }
+}
+
+func droneRadius(d *Drone) float64 {
+    // Use horizontal footprint; take max of half-length/half-width, scale slightly
+    r := 0.5 * math.Max(d.Dimensions.X, d.Dimensions.Y)
+    if r < 0.05 { r = 0.05 }
+    return r
 }
 
 func (s *Simulator) render(window *glfw.Window) {
@@ -560,6 +621,24 @@ func (s *Simulator) renderUI(width, height int) {
 	}
 	s.ui.DrawText(x, y, "BAT "+itoa(batPct)+"%  "+batt, scaleBody, batColor)
 	y += lineHeight
+
+	// Health summary: DEST / DMG / OK
+	healthText := "OK"
+	healthColor := Color{0.8, 1.0, 0.8, 1}
+	if s.activeDrone().Destroyed {
+		healthText = "DEST"
+		healthColor = Color{1.0, 0.35, 0.35, 1}
+	} else if len(s.activeDrone().Engines) > 0 {
+		for _, e := range s.activeDrone().Engines {
+			if !e.Functional || e.Efficiency < 0.99 {
+				healthText = "DMG"
+				healthColor = Color{1.0, 0.8, 0.3, 1}
+				break
+			}
+		}
+	}
+	s.ui.DrawText(x, y, "HLT "+healthText, scaleBody, healthColor)
+	y += lineHeight
 	// Swarm debug (if active)
 	if s.swarm != nil {
 		// max follower distance and comms latency
@@ -644,6 +723,45 @@ func (s *Simulator) renderUI(width, height int) {
 	y += lineHeight
 	s.ui.DrawText(x, y, "TEMP 2/3 "+itoa(t2)+"C "+itoa(t3)+"C", scaleBody, Color{1, 0.85, 0.85, 1})
 	y += lineHeight
+
+	// Engine health (efficiency or FAIL)
+	if len(s.activeDrone().Engines) > 0 {
+		vals := make([]string, len(s.activeDrone().Engines))
+		cols := make([]Color, len(s.activeDrone().Engines))
+		for i, e := range s.activeDrone().Engines {
+			if !e.Functional || e.Efficiency <= 0.01 {
+				vals[i] = "X"
+				cols[i] = Color{1.0, 0.35, 0.35, 1}
+			} else {
+				pct := int(e.Efficiency*100 + 0.5)
+				vals[i] = itoa(pct)
+				if pct >= 90 {
+					cols[i] = Color{0.8, 1.0, 0.8, 1}
+				} else if pct >= 50 {
+					cols[i] = Color{1.0, 0.9, 0.5, 1}
+				} else {
+					cols[i] = Color{1.0, 0.6, 0.4, 1}
+				}
+			}
+		}
+		// Print in pairs per line
+		line := func(i, j int) {
+			text := "ENG "+itoa(i)+"/"+itoa(j)+" "+vals[i]+" "+vals[j]
+			// Draw the label and then overlay values in their colors
+			s.ui.DrawText(x, y, text, scaleBody, Color{1, 1, 1, 1})
+			// crude overlay colorization: redraw just values at approximate offsets
+			// offsets tuned to monospaced 7px font with scale
+			off := 0
+			// compute simple offsets: after "ENG i/j " is ~10 chars; then value, space, value
+			off = 10
+			s.ui.DrawText(x+off*scaleBody*3, y, vals[i], scaleBody, cols[i])
+			s.ui.DrawText(x+(off+len(vals[i])+1)*scaleBody*3, y, vals[j], scaleBody, cols[j])
+			// advance
+			y += lineHeight
+		}
+		if len(vals) >= 2 { line(0, 1) }
+		if len(vals) >= 4 { line(2, 3) }
+	}
 	// Camera parameters
 	switch s.camera.Mode {
 	case CameraModeFollow:

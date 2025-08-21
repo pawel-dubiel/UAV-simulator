@@ -108,10 +108,9 @@ func (s *Swarm) Update(dt float64) {
 		}
 		offset := Vec3{R * math.Cos(angle), 0, R * math.Sin(angle)}
 		targetPos := base.Add(offset)
-		// Altitude follow: simple setpoint to leader altitude
-		follower.SetFlightMode(FlightModeAltitudeHold)
-		follower.AltitudeHold = base.Y
-		follower.SetThrottle(follower.HoverThrottlePercent())
+            // Altitude follow: simple setpoint to leader altitude
+            follower.SetFlightMode(FlightModeAltitudeHold)
+            follower.AltitudeHold = base.Y
 
 		// Match altitude using altitude hold PID
 		follower.SetFlightMode(FlightModeAltitudeHold)
@@ -119,9 +118,7 @@ func (s *Swarm) Update(dt float64) {
 		if s.hasLast {
 			altTarget = s.last.Position.Y
 		}
-		follower.AltitudeHold = altTarget
-		// Use hover throttle; altitude PID provides correction force.
-		follower.SetThrottle(follower.HoverThrottlePercent())
+            follower.AltitudeHold = altTarget
 
 		// Lateral control: PD on position error with relative velocity damping
 		ex := targetPos.X - follower.Position.X
@@ -235,9 +232,8 @@ func (s *Swarm) Reform() {
 		d.Velocity = Vec3{}
 		d.AngularVel = Vec3{}
 		d.Rotation = Vec3{0, s.last.Yaw, 0}
-		d.SetFlightMode(FlightModeAltitudeHold)
-		d.AltitudeHold = base.Y
-		d.SetThrottle(d.HoverThrottlePercent())
+        d.SetFlightMode(FlightModeAltitudeHold)
+        d.AltitudeHold = base.Y
 		rank++
 	}
 }
