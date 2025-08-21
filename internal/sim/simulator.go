@@ -622,23 +622,23 @@ func (s *Simulator) renderUI(width, height int) {
 	s.ui.DrawText(x, y, "BAT "+itoa(batPct)+"%  "+batt, scaleBody, batColor)
 	y += lineHeight
 
-	// Health summary: DEST / DMG / OK
-	healthText := "OK"
+    // Health summary: DESTROYED / DAMAGED / OK
+    healthText := "OK"
 	healthColor := Color{0.8, 1.0, 0.8, 1}
 	if s.activeDrone().Destroyed {
-		healthText = "DEST"
+        healthText = "DESTROYED"
 		healthColor = Color{1.0, 0.35, 0.35, 1}
 	} else if len(s.activeDrone().Engines) > 0 {
 		for _, e := range s.activeDrone().Engines {
-			if !e.Functional || e.Efficiency < 0.99 {
-				healthText = "DMG"
-				healthColor = Color{1.0, 0.8, 0.3, 1}
-				break
-			}
-		}
-	}
-	s.ui.DrawText(x, y, "HLT "+healthText, scaleBody, healthColor)
-	y += lineHeight
+            if !e.Functional || e.Efficiency < 0.99 {
+                healthText = "DAMAGED"
+                healthColor = Color{1.0, 0.8, 0.3, 1}
+                break
+            }
+        }
+    }
+    s.ui.DrawText(x, y, "HEALTH "+healthText, scaleBody, healthColor)
+    y += lineHeight
 	// Swarm debug (if active)
 	if s.swarm != nil {
 		// max follower distance and comms latency
@@ -729,12 +729,12 @@ func (s *Simulator) renderUI(width, height int) {
 		vals := make([]string, len(s.activeDrone().Engines))
 		cols := make([]Color, len(s.activeDrone().Engines))
 		for i, e := range s.activeDrone().Engines {
-			if !e.Functional || e.Efficiency <= 0.01 {
-				vals[i] = "X"
-				cols[i] = Color{1.0, 0.35, 0.35, 1}
-			} else {
-				pct := int(e.Efficiency*100 + 0.5)
-				vals[i] = itoa(pct)
+            if !e.Functional || e.Efficiency <= 0.01 {
+                vals[i] = "FAIL"
+                cols[i] = Color{1.0, 0.35, 0.35, 1}
+            } else {
+                pct := int(e.Efficiency*100 + 0.5)
+                vals[i] = itoa(pct) + "%"
 				if pct >= 90 {
 					cols[i] = Color{0.8, 1.0, 0.8, 1}
 				} else if pct >= 50 {
