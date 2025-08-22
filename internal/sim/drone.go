@@ -626,14 +626,57 @@ func (d *Drone) updatePIDController(pid *PIDController, setpoint, current float6
 
 // Apply torque for rotation control
 func (d *Drone) AddTorque(torque Vec3, dt float64) {
-	if !d.IsArmed {
-		return
-	}
+    if !d.IsArmed {
+        return
+    }
 
-	// Convert torque to angular acceleration
-	momentOfInertia := d.Mass * 0.02 // Simplified MOI
-	angularAccel := torque.Mul(1.0 / momentOfInertia)
-	d.AngularVel = d.AngularVel.Add(angularAccel.Mul(dt))
+    // Convert torque to angular acceleration
+    // Use per-axis inertia for more realistic response
+    Ix := d.Inertia.X
+    Iy := d.Inertia.Y
+    Iz := d.Inertia.Z
+    ax := 0.0
+    ay := 0.0
+    az := 0.0
+    if Ix > 0 { ax = torque.X / Ix }
+    if Iy > 0 { ay = torque.Y / Iy }
+    if Iz > 0 { az = torque.Z / Iz }
+    d.AngularVel = d.AngularVel.Add(Vec3{ax, ay, az}.Mul(dt))
+}
+
+// RecomputeInertia recalculates the inertia tensor (diagonal approximation)
+// using a central rectangular prism for the body and point masses for engines.
+func (d *Drone) RecomputeInertia() {
+    // Remaining mass after subtracting engine masses is assigned to the body
+    mBody := d.Mass
+    for _, e := range d.Engines {
+        mBody -= e.Mass
+    }
+    if mBody < 0 { mBody = 0 }
+
+    // Rectangular prism at origin, axes aligned with body
+    L := d.Dimensions.X // length (X)
+    W := d.Dimensions.Y // width  (Z-right axis extent)
+    H := d.Dimensions.Z // height (Y)
+    c := 1.0 / 12.0
+    Ix := c * mBody * (H*H + W*W)
+    Iy := c * mBody * (L*L + W*W)
+    Iz := c * mBody * (L*L + H*H)
+
+    // Engines as point masses
+    for _, e := range d.Engines {
+        x, y, z := e.Position.X, e.Position.Y, e.Position.Z
+        m := e.Mass
+        Ix += m * (y*y + z*z)
+        Iy += m * (x*x + z*z)
+        Iz += m * (x*x + y*y)
+    }
+
+    const minMOI = 1e-6
+    if Ix < minMOI { Ix = minMOI }
+    if Iy < minMOI { Iy = minMOI }
+    if Iz < minMOI { Iz = minMOI }
+    d.Inertia = Vec3{X: Ix, Y: Iy, Z: Iz}
 }
 
 // Engine failure/derating APIs
