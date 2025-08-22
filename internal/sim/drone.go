@@ -170,6 +170,15 @@ func NewDrone() *Drone {
 		{Position: Vec3{X: -armX, Y: 0, Z: -armZ}, Spin: +1, Efficiency: 1.0, Functional: true, MaxThrust: perMax},// rear-left (CW)
 	}
 
+	// Allocate mass to engines and compute inertia
+	engineFrac := 0.35
+	perEngineMass := (engineFrac * d.Mass) / float64(len(d.Engines))
+	for i := range d.Engines {
+		d.Engines[i].Mass = perEngineMass
+	}
+	// Derive inertia from body prism + engine point masses
+	d.RecomputeInertia()
+
     return d
 }
 
