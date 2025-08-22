@@ -15,21 +15,29 @@ import (
 )
 
 type Simulator struct {
-	drones     []*Drone
-	selected   int
-	camera     *Camera
-	renderer   *Renderer
-	input      *InputHandler
-	lastTime   time.Time
-	ui         *UIRenderer
-	lastDt     float64
-	fps        float64
-	fpsHistory []float64
-	fpsIdx     int
-	uiVisible  bool
-	swarm      *Swarm
+    drones     []*Drone
+    selected   int
+    camera     *Camera
+    renderer   *Renderer
+    input      *InputHandler
+    lastTime   time.Time
+    ui         *UIRenderer
+    lastDt     float64
+    fps        float64
+    fpsHistory []float64
+    fpsIdx     int
+    uiVisible  bool
+    swarm      *Swarm
 
-	mu         sync.RWMutex
+    mu         sync.RWMutex
+
+    // Cached UI strings to avoid per-frame allocations
+    uiTopLine   string
+    uiTopSel    int
+    uiTopCount  int
+    uiTopArmed  bool
+    uiTopMode   FlightMode
+    uiTopCam    CameraMode
 }
 
 func (s *Simulator) activeDrone() *Drone {
