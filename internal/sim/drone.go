@@ -309,14 +309,10 @@ func (d *Drone) calculateThrustAndTorque() (Vec3, Vec3) {
     tf := d.ThrottlePercent / 100.0
     tf = tf * tf
 
-    // Local-up rotated to world direction
+    // Thrust is always along body-up; rotate to world using R = R_y * R_x * R_z
     roll, pitch, yaw := d.Rotation.Z, d.Rotation.X, d.Rotation.Y
-    cosRoll, sinRoll := math.Cos(roll), math.Sin(roll)
-    cosPitch, sinPitch := math.Cos(pitch), math.Sin(pitch)
-    cosYaw, sinYaw := math.Cos(yaw), math.Sin(yaw)
-    upX := -cosYaw*sinRoll + sinYaw*sinPitch*cosRoll
-    upY := cosPitch * cosRoll
-    upZ := sinYaw*sinRoll + cosYaw*sinPitch*cosRoll
+    rot := RotationYMat4(yaw).Mul(RotationXMat4(pitch)).Mul(RotationZMat4(roll))
+    up := rot.MulDirection(Vec3{0, 1, 0})
 
     // Ground effect factor
     ge := 1.0
@@ -343,7 +339,7 @@ func (d *Drone) calculateThrustAndTorque() (Vec3, Vec3) {
         d.PropSpeeds[i] += (targetRPM - d.PropSpeeds[i]) * 0.1
     }
 
-    thrust := Vec3{X: upX * sumFy, Y: upY * sumFy, Z: upZ * sumFy}
+    thrust := up.Mul(sumFy)
     return thrust, torque
 }
 
