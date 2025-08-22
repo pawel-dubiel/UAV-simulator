@@ -69,7 +69,10 @@ type Drone struct {
 	PitchPID    PIDController
 	RollPID     PIDController
 	YawPID      PIDController
-	AltitudePID PIDController
+    AltitudePID PIDController
+
+    // Rotational inertia about body axes (Ix, Iy, Iz)
+    Inertia Vec3
 }
 
 type PIDController struct {
@@ -89,6 +92,7 @@ type Engine struct {
     Efficiency float64 // 0..1 multiplier for available thrust
     Functional bool    // If false, produces no thrust
     MaxThrust  float64 // N at 100% throttle per engine
+    Mass       float64 // kg mass allocated to motor/arm at this position
 }
 
 func NewDrone() *Drone {
