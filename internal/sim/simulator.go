@@ -791,7 +791,58 @@ func (s *Simulator) renderUI(width, height int) {
 
 	s.ui.Flush()
 	gl.Disable(gl.SCISSOR_TEST)
-	gl.Enable(gl.DEPTH_TEST)
+    gl.Enable(gl.DEPTH_TEST)
+}
+
+// topStatusText builds and caches the HUD's top status line to avoid
+// repeated allocations inside the render loop. It recomputes only when
+// the selected drone, drone count, armed state, flight mode, or camera mode changes.
+func (s *Simulator) topStatusText() string {
+    sel := s.selected
+    cnt := len(s.drones)
+    d := s.activeDrone()
+    armed := d != nil && d.IsArmed
+    mode := FlightModeManual
+    if d != nil {
+        mode = d.FlightMode
+    }
+    cam := s.camera.Mode
+
+    if s.uiTopLine != "" && s.uiTopSel == sel && s.uiTopCount == cnt && s.uiTopArmed == armed && s.uiTopMode == mode && s.uiTopCam == cam {
+        return s.uiTopLine
+    }
+
+    statusStr := "DISARM"
+    if armed {
+        statusStr = "ARM"
+    }
+
+    modeStr := "MAN"
+    switch mode {
+    case FlightModeAltitudeHold:
+        modeStr = "ALT"
+    case FlightModeHover:
+        modeStr = "HOV"
+    }
+
+    camStr := "FOL"
+    switch cam {
+    case CameraModeTopDown:
+        camStr = "TOP"
+    case CameraModeFPV:
+        camStr = "FPV"
+    }
+
+    s.uiTopLine = "DRONE " + itoa(sel+1) + "/" + itoa(cnt) + "  " +
+        "STAT " + statusStr + "   " +
+        "MODE " + modeStr + "   " +
+        "CAM " + camStr
+    s.uiTopSel = sel
+    s.uiTopCount = cnt
+    s.uiTopArmed = armed
+    s.uiTopMode = mode
+    s.uiTopCam = cam
+    return s.uiTopLine
 }
 
 // Simple integer to string without fmt to avoid allocation overhead in UI loop
