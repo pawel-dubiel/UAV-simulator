@@ -547,27 +547,7 @@ func (s *Simulator) renderUI(width, height int) {
 	s.ui.DrawText(x, y, "DRONE STATUS", scaleHeader, Color{1, 1, 1, 1})
 	y += lineHeight * 2
 
-	// Status strings
-	status := "DISARM"
-	if s.activeDrone().IsArmed {
-		status = "ARM"
-	}
-
-	mode := "MAN"
-	switch s.activeDrone().FlightMode {
-	case FlightModeAltitudeHold:
-		mode = "ALT"
-	case FlightModeHover:
-		mode = "HOV"
-	}
-
-	cam := "FOL"
-	switch s.camera.Mode {
-	case CameraModeTopDown:
-		cam = "TOP"
-	case CameraModeFPV:
-		cam = "FPV"
-	}
+    // Status strings handled via cached builder to avoid per-frame allocations
 
 	// Battery status
 	batt := "OK"
@@ -587,8 +567,8 @@ func (s *Simulator) renderUI(width, height int) {
 	fps := int(s.fps + 0.5)
 	ms := int(s.lastDt*1000.0 + 0.5)
 
-	// Lines
-	s.ui.DrawText(x, y, "DRONE "+itoa(s.selected+1)+"/"+itoa(len(s.drones))+"  "+"STAT "+status+"   MODE "+mode+"   CAM "+cam, scaleBody, Color{0.9, 0.95, 1, 1})
+    // Lines
+    s.ui.DrawText(x, y, s.topStatusText(), scaleBody, Color{0.9, 0.95, 1, 1})
 	y += lineHeight
 	s.ui.DrawText(x, y, "SIM FPS "+itoa(fps)+" DT "+itoa(ms)+"MS", scaleBody, Color{0.9, 1, 0.9, 1})
 	y += lineHeight
