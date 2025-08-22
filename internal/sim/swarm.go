@@ -7,18 +7,20 @@ import (
 // Swarm coordinates simple follower behavior around a leader (index 0).
 // Followers maintain offsets around the leader and match altitude using the drone's PID.
 type Swarm struct {
-	drones []*Drone
-	// simple broadcast of leader state with latency
-	simTime   float64
-	latency   float64
-	queue     []scheduledMsg
-	last      LeaderState
-	hasLast   bool
-	leaderIdx int
+    drones []*Drone
+    // simple broadcast of leader state with latency
+    simTime   float64
+    latency   float64
+    queue     []scheduledMsg
+    last      LeaderState
+    hasLast   bool
+    leaderIdx int
+    // per-follower control state for smoothing targets
+    ctrl map[int]*followerCtrlState
 }
 
 func NewSwarm(drones []*Drone) *Swarm {
-	return &Swarm{drones: drones, latency: 0.1, leaderIdx: 0}
+    return &Swarm{drones: drones, latency: 0.1, leaderIdx: 0, ctrl: make(map[int]*followerCtrlState)}
 }
 
 func (s *Swarm) SetLeader(idx int) {
@@ -74,19 +76,23 @@ func (s *Swarm) Update(dt float64) {
 	count := len(s.drones)
 	followers := count - 1
 	rank := 0
-	// Controller gains (sane base)
-    kpPos := 0.8  // m -> m/s^2
-    kdVel := 1.2  // (m/s) -> m/s^2
-    kpAtt := 4.0  // reduced attitude P to avoid flips
-    kdAtt := 3.0  // rad/s damping
-    kpYaw := 1.2  // gentler yaw coupling
+    // Controller gains (cascaded: position -> velocity -> attitude)
+    // Outer loop: position error -> velocity target
+    kpPosV := 0.6 // m -> m/s
+    vMax := 3.0   // cap commanded lateral speed
+    // Middle loop: velocity error -> acceleration (maps to tilt)
+    kpVel := 1.1  // (m/s) -> m/s^2
+    kdVel := 0.6  // D on relative velocity
+    // Inner loop: attitude tracking -> torque
+    kpAtt := 4.0  // attitude P
+    kdAtt := 3.0  // rate damping
+    // Yaw loop
+    kpYaw := 1.2
     kdYaw := 0.8
 	g := 9.81
 	base := leader.Position
 	lvel := leader.Velocity
 	lyaw := leader.Rotation.Y
-	lpitch := leader.Rotation.X
-	lroll := leader.Rotation.Z
 	if s.hasLast {
 		base = s.last.Position
 		lvel = s.last.Velocity
@@ -101,7 +107,13 @@ func (s *Swarm) Update(dt float64) {
 		if i == s.leaderIdx {
 			continue
 		}
-		follower := s.drones[i]
+        follower := s.drones[i]
+        // Init follower control state if absent
+        st := s.ctrl[i]
+        if st == nil {
+            st = &followerCtrlState{prevPitch: follower.Rotation.X, prevRoll: follower.Rotation.Z}
+            s.ctrl[i] = st
+        }
 		angle := 0.0
 		if followers > 0 {
 			angle = 2 * math.Pi * float64(rank) / float64(followers)
@@ -120,29 +132,35 @@ func (s *Swarm) Update(dt float64) {
 		}
             follower.AltitudeHold = altTarget
 
-		// Lateral control: PD on position error with relative velocity damping
-		ex := targetPos.X - follower.Position.X
-		ez := targetPos.Z - follower.Position.Z
-		vxRel := follower.Velocity.X - lvel.X
-		vzRel := follower.Velocity.Z - lvel.Z
-        ax := kpPos*ex - kdVel*vxRel
-        az := kpPos*ez - kdVel*vzRel
+        // Cascaded lateral control
+        // 1) Position -> velocity target (in leader frame)
+        ex := targetPos.X - follower.Position.X
+        ez := targetPos.Z - follower.Position.Z
+        vtx := clamp(kpPosV*ex, -vMax, vMax)
+        vtz := clamp(kpPosV*ez, -vMax, vMax)
+        // 2) Velocity error (relative to leader) -> acceleration command
+        vxRel := follower.Velocity.X - lvel.X
+        vzRel := follower.Velocity.Z - lvel.Z
+        ax := kpVel*(vtx-vxRel) - kdVel*vxRel
+        az := kpVel*(vtz-vzRel) - kdVel*vzRel
         // Limit commanded acceleration to avoid aggressive tilts
         maxAcc := 3.0
         if ax > maxAcc { ax = maxAcc } else if ax < -maxAcc { ax = -maxAcc }
         if az > maxAcc { az = maxAcc } else if az < -maxAcc { az = -maxAcc }
-		// Convert desired acceleration to small-angle tilt targets
-		pitchTarget := clamp(-math.Atan2(az, g), -10*math.Pi/180, 10*math.Pi/180)
-		rollTarget := clamp(math.Atan2(ax, g), -10*math.Pi/180, 10*math.Pi/180)
+        // 3) Acceleration -> tilt targets (small-angle assumption)
+        pitchCmd := clamp(-math.Atan2(az, g), -10*math.Pi/180, 10*math.Pi/180)
+        rollCmd  := clamp(math.Atan2(ax, g), -10*math.Pi/180, 10*math.Pi/180)
+        // Rate-limit tilt targets to avoid jitter/excitation
+        maxTiltRate := 120.0 * math.Pi / 180.0 // rad/s
+        pitchTarget := slew(st.prevPitch, pitchCmd, maxTiltRate, dt)
+        rollTarget  := slew(st.prevRoll,  rollCmd,  maxTiltRate, dt)
+        st.prevPitch = pitchTarget
+        st.prevRoll  = rollTarget
 
-		// Attitude PD tracking for pitch/roll
+        // Attitude PD tracking for pitch/roll (single objective: track tilt targets)
         torqueX := kpAtt*(pitchTarget-follower.Rotation.X) - kdAtt*follower.AngularVel.X
         torqueZ := kpAtt*(rollTarget-follower.Rotation.Z) - kdAtt*follower.AngularVel.Z
-		// Align roll/pitch with leader attitude (leader typically level)
-		kAlignAtt := 2.0
-		torqueX += kAlignAtt * (lpitch - follower.Rotation.X)
-		torqueZ += kAlignAtt * (lroll - follower.Rotation.Z)
-		// Align yaw with leader
+        // Align yaw with leader
         yawErr := angleDiff(lyaw, follower.Rotation.Y)
         yawTorque := kpYaw*yawErr - kdYaw*follower.AngularVel.Y
 		// Additional gate: require follower to have some altitude clearance before allowing lateral control
@@ -175,7 +193,7 @@ func (s *Swarm) Update(dt float64) {
         if torqueX > tMax { torqueX = tMax } else if torqueX < -tMax { torqueX = -tMax }
         if torqueZ > tMax { torqueZ = tMax } else if torqueZ < -tMax { torqueZ = -tMax }
         if yawTorque > 0.25 { yawTorque = 0.25 } else if yawTorque < -0.25 { yawTorque = -0.25 }
-		follower.AddTorque(Vec3{X: torqueX, Y: yawTorque, Z: torqueZ}, dt)
+        follower.AddTorque(Vec3{X: torqueX, Y: yawTorque, Z: torqueZ}, dt)
 		// Gentle clamp toward slot and velocity damping when far
 		delta := follower.Position.Sub(targetPos)
 		if active {
@@ -198,6 +216,12 @@ func (s *Swarm) Update(dt float64) {
 		}
 		rank++
 	}
+}
+
+// followerCtrlState holds per-follower control memory for smoothing
+type followerCtrlState struct {
+    prevPitch float64
+    prevRoll  float64
 }
 
 // initializeFollower sets safe initial conditions on arming.
@@ -268,13 +292,25 @@ func (s *Swarm) MessageAge() float64 {
 }
 
 func clamp(x, lo, hi float64) float64 {
-	if x < lo {
-		return lo
-	}
-	if x > hi {
-		return hi
-	}
-	return x
+    if x < lo {
+        return lo
+    }
+    if x > hi {
+        return hi
+    }
+    return x
+}
+
+// slew limits the rate of change from prev toward target by maxRate (units/sec)
+func slew(prev, target, maxRate, dt float64) float64 {
+    maxDelta := maxRate * dt
+    delta := target - prev
+    if delta > maxDelta {
+        delta = maxDelta
+    } else if delta < -maxDelta {
+        delta = -maxDelta
+    }
+    return prev + delta
 }
 
 func max(a, b int) int {
