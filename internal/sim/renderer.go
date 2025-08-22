@@ -223,10 +223,13 @@ func (r *Renderer) initGeometry() {
 }
 
 func (r *Renderer) SetMatrices(model, view, projection Mat4) {
-	gl.UseProgram(r.shaderProgram)
-	gl.UniformMatrix4fv(r.modelLoc, 1, false, &model[0])
-	gl.UniformMatrix4fv(r.viewLoc, 1, false, &view[0])
-	gl.UniformMatrix4fv(r.projectionLoc, 1, false, &projection[0])
+    gl.UseProgram(r.shaderProgram)
+    m32 := toGLMat4(model)
+    v32 := toGLMat4(view)
+    p32 := toGLMat4(projection)
+    gl.UniformMatrix4fv(r.modelLoc, 1, false, &m32[0])
+    gl.UniformMatrix4fv(r.viewLoc, 1, false, &v32[0])
+    gl.UniformMatrix4fv(r.projectionLoc, 1, false, &p32[0])
 }
 
 func (r *Renderer) RenderDrone() {
@@ -255,7 +258,16 @@ func (r *Renderer) RenderGround() {
 }
 
 func (r *Renderer) SetCamera(pos Vec3) {
-	r.cameraPos = pos
+    r.cameraPos = pos
+}
+
+// toGLMat4 converts a float64 Mat4 to a float32 array suitable for OpenGL.
+func toGLMat4(m Mat4) [16]float32 {
+    var out [16]float32
+    for i := 0; i < 16; i++ {
+        out[i] = float32(m[i])
+    }
+    return out
 }
 
 func compileShader(source string, shaderType uint32) uint32 {
