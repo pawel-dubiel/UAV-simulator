@@ -24,6 +24,7 @@ func main() {
         drones = append(drones, d)
     }
     swarm := sim.NewSwarm(drones)
+    // Distributed-only swarm by default; nothing to set
 
     if *arm {
         for _, d := range drones {
@@ -71,4 +72,3 @@ func main() {
 }
 
 func max(a, b int) int { if a > b { return a }; return b }
-

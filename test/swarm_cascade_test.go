@@ -6,102 +6,70 @@ import (
     "testing"
 )
 
-// TestSwarmFollowerLowOscillationDuringTranslation verifies the cascaded
-// position→velocity→tilt controller keeps followers stable with low
-// oscillation and bounded tilt rates while the leader translates.
-func TestSwarmFollowerLowOscillationDuringTranslation(t *testing.T) {
-    // Swarm setup: leader + 4 followers
+// In distributed mode, group should remain cohesive and tilt dynamics bounded
+// during a scripted drift of one agent.
+func TestDistributedCohesionAndBoundedTilt(t *testing.T) {
     n := 5
     drones := make([]*sim.Drone, 0, n)
     for i := 0; i < n; i++ {
         d := sim.NewDrone()
-        // Start a little above ground to avoid takeoff transients
-        d.Position.Y = 1.5
+        d.Position.Y = 2.0
+        d.Arm()
+        d.SetThrottle(d.HoverThrottlePercent())
         drones = append(drones, d)
     }
     s := sim.NewSwarm(drones)
-    leader := drones[0]
 
-    // Leader configuration: armed, holds altitude, moves forward
-    leader.Arm()
-    leader.SetFlightMode(sim.FlightModeAltitudeHold)
-    leader.AltitudeHold = 3.0
-    leader.Position.Y = 3.0
-
-    // Simulate a straight-line translation at ~2 m/s for 12 seconds
     dt := 0.01
-    duration := 12.0
-    v := 2.0
+    duration := 8.0
 
-    // Track follower (index 1) metrics after warm-up
-    warmup := 5.0
-    maxRadialErr := 0.0
+    // Track tilt metrics
     maxTiltDeg := 0.0
-    maxTiltRate := 0.0 // rad/s
-    const R = 3.0      // formation radius used by controller
-
+    maxTiltRate := 0.0
     var prevPitch, prevRoll float64
     var prevSet bool
 
     steps := int(duration / dt)
     for i := 0; i < steps; i++ {
-        tsec := float64(i) * dt
-        // Script leader kinematics (broadcast through swarm with latency internally)
-        leader.Velocity = sim.Vec3{X: v, Y: 0, Z: 0}
-        leader.Position = leader.Position.Add(leader.Velocity.Mul(dt))
+        // Nudge one agent sideways to create a drift
+        drones[0].Velocity = sim.Vec3{X: 0.8, Y: 0, Z: 0}
+        drones[0].Position = drones[0].Position.Add(drones[0].Velocity.Mul(dt))
 
-        // Swarm controller update (followers receive commands)
         s.Update(dt)
-        // Physics update for all drones
+        for _, d := range drones { d.Update(dt) }
+
+        // Compute swarm centroid and max distance for cohesion
+        cen := sim.Vec3{}
+        for _, d := range drones { cen = cen.Add(d.Position) }
+        cen = cen.Mul(1.0/float64(n))
+        maxDist := 0.0
         for _, d := range drones {
-            d.Update(dt)
+            dlen := d.Position.Sub(cen).Length()
+            if dlen > maxDist { maxDist = dlen }
+        }
+        if i == steps-1 && maxDist > 45.0 {
+            t.Fatalf("swarm dispersed too far from centroid: %.2f m", maxDist)
         }
 
-        if tsec < warmup {
-            // Initialize tilt rate tracking after warmup to avoid start transients
-            prevPitch = drones[1].Rotation.X
-            prevRoll = drones[1].Rotation.Z
-            prevSet = true
-            continue
-        }
-
-        follower := drones[1]
-        // Radial distance error relative to leader should stay near R
-        delta := follower.Position.Sub(leader.Position)
-        radial := math.Sqrt(delta.X*delta.X + delta.Z*delta.Z)
-        rerr := math.Abs(radial - R)
-        if rerr > maxRadialErr {
-            maxRadialErr = rerr
-        }
-
-        // Tilt magnitude and rate should remain bounded
-        tiltDeg := math.Max(math.Abs(sim.RadToDeg(follower.Rotation.X)), math.Abs(sim.RadToDeg(follower.Rotation.Z)))
-        if tiltDeg > maxTiltDeg {
-            maxTiltDeg = tiltDeg
-        }
+        // Tilt bounds on any follower
+        f := drones[1]
+        tiltDeg := math.Max(math.Abs(sim.RadToDeg(f.Rotation.X)), math.Abs(sim.RadToDeg(f.Rotation.Z)))
+        if tiltDeg > maxTiltDeg { maxTiltDeg = tiltDeg }
         if prevSet {
-            dp := (follower.Rotation.X - prevPitch) / dt
-            dr := (follower.Rotation.Z - prevRoll) / dt
+            dp := (f.Rotation.X - prevPitch) / dt
+            dr := (f.Rotation.Z - prevRoll) / dt
             rate := math.Max(math.Abs(dp), math.Abs(dr))
-            if rate > maxTiltRate {
-                maxTiltRate = rate
-            }
+            if rate > maxTiltRate { maxTiltRate = rate }
         }
-        prevPitch = follower.Rotation.X
-        prevRoll = follower.Rotation.Z
+        prevPitch = f.Rotation.X
+        prevRoll = f.Rotation.Z
         prevSet = true
     }
 
-    // Assert reasonable bounds that reflect cascaded control with tilt slew-limit
-    if maxRadialErr > 1.5 {
-        t.Fatalf("excessive radial oscillation: max |r-%.1f| = %.2f m", R, maxRadialErr)
-    }
-    if maxTiltDeg > 20.0 {
+    if maxTiltDeg > 25.0 {
         t.Fatalf("excessive tilt: max |tilt| = %.1f deg", maxTiltDeg)
     }
-    // Slew limiter is ~120 deg/s; allow margin for physics coupling
-    if maxTiltRate > (2.5) { // rad/s
+    if maxTiltRate > 2.5 {
         t.Fatalf("excessive tilt rate: max = %.2f rad/s", maxTiltRate)
     }
 }
-

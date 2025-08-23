@@ -134,6 +134,7 @@ func (s *Simulator) Run(window *glfw.Window) {
 	fmt.Println("  Q/E - Roll left/right")
 	fmt.Println("  Up/Down - Pitch forward/back")
 	fmt.Println("  Z - Zero throttle  X - Hover throttle  [/] - Select drone")
+	fmt.Println("  U - Arm ALL + hover  J - Disarm ALL")
 	fmt.Println()
 	fmt.Println("FLIGHT MODES:")
 	fmt.Println("  1 - Manual  2 - Altitude Hold  3 - Hover")
@@ -333,36 +334,46 @@ func (s *Simulator) displayTelemetry() {
 }
 
 func (s *Simulator) processInput(dt float64) {
-	s.input.ProcessInput(s.activeDrone(), s.camera, dt)
-	// Toggle HUD visibility
-	if s.input.WasKeyPressed(glfw.KeyF1) {
-		s.uiVisible = !s.uiVisible
-	}
-	// Cycle selected drone for control and camera focus
-	if s.input.WasKeyPressed(glfw.KeyLeftBracket) {
-		s.selected--
-		if s.selected < 0 {
-			s.selected = len(s.drones) - 1
-		}
-		if s.swarm != nil {
-			s.swarm.SetLeader(s.selected)
-		}
-	}
-	if s.input.WasKeyPressed(glfw.KeyRightBracket) {
-		s.selected++
-		if s.selected >= len(s.drones) {
-			s.selected = 0
-		}
-		if s.swarm != nil {
-			s.swarm.SetLeader(s.selected)
-		}
-	}
-	// Re-form swarm in case of dispersion
-	if s.input.WasKeyPressed(glfw.KeyR) {
-		if s.swarm != nil {
-			s.swarm.Reform()
-		}
-	}
+    s.input.ProcessInput(s.activeDrone(), s.camera, dt)
+    // Toggle HUD visibility
+    if s.input.WasKeyPressed(glfw.KeyF1) {
+        s.uiVisible = !s.uiVisible
+    }
+    // Cycle selected drone for control and camera focus
+    if s.input.WasKeyPressed(glfw.KeyLeftBracket) {
+        s.selected--
+        if s.selected < 0 {
+            s.selected = len(s.drones) - 1
+        }
+    }
+    if s.input.WasKeyPressed(glfw.KeyRightBracket) {
+        s.selected++
+        if s.selected >= len(s.drones) {
+            s.selected = 0
+        }
+    }
+    // Re-form swarm in case of dispersion
+    if s.input.WasKeyPressed(glfw.KeyR) {
+        if s.swarm != nil {
+            s.swarm.Reform()
+        }
+    }
+    // Arm all drones and set hover throttle + altitude hold (non-function keys)
+    if s.input.WasKeyPressed(glfw.KeyU) {
+        for _, d := range s.drones {
+            d.Arm()
+            d.SetThrottle(d.HoverThrottlePercent())
+            d.SetFlightMode(FlightModeAltitudeHold)
+            d.AltitudeHold = d.Position.Y
+        }
+    }
+    // Disarm all drones quickly (safety)
+    if s.input.WasKeyPressed(glfw.KeyJ) {
+        for _, d := range s.drones {
+            d.Disarm()
+        }
+    }
+    // No swarm mode toggle; distributed only
 }
 
 func (s *Simulator) update(dt float64) {
@@ -627,16 +638,15 @@ func (s *Simulator) renderUI(width, height int) {
     }
     s.ui.DrawText(x, y, "HEALTH "+healthText, scaleBody, healthColor)
     y += lineHeight
-	// Swarm debug (if active)
-	if s.swarm != nil {
-		// max follower distance and comms latency
-		maxd := int(s.swarm.MaxFollowerDistance() + 0.5)
-		ageMs := int(s.swarm.MessageAge()*1000 + 0.5)
-		s.ui.DrawText(x, y, "SWARM N "+itoa(len(s.drones))+"  FAR "+itoa(maxd)+"M  AGE "+itoa(ageMs)+"MS", scaleBody, Color{0.9, 1, 0.95, 1})
-		y += lineHeight
-		s.ui.DrawText(x, y, "REFORM: R  SELECT: [ ]", scaleBody, Color{0.9, 0.95, 1, 1})
-		y += lineHeight
-	}
+    // Swarm debug (if active)
+    if s.swarm != nil {
+        // max distance from centroid
+        maxd := int(s.swarm.MaxDistanceFromCentroid() + 0.5)
+        s.ui.DrawText(x, y, "SWARM N "+itoa(len(s.drones))+"  FAR "+itoa(maxd)+"M", scaleBody, Color{0.9, 1, 0.95, 1})
+        y += lineHeight
+        s.ui.DrawText(x, y, "REFORM: R  ARMALL: U  DISARM: J  SELECT: [ ]", scaleBody, Color{0.9, 0.95, 1, 1})
+        y += lineHeight
+    }
 	s.ui.DrawText(x, y, "THR "+itoa(throttle)+"%   PWR "+itoa(power)+"W", scaleBody, Color{1, 0.95, 0.8, 1})
 	y += lineHeight
 	s.ui.DrawText(x, y, "ALT "+itoa(alt)+"   HSPD "+itoa(speed)+"   VSPD "+itoa(vspd), scaleBody, Color{1, 1, 1, 1})
