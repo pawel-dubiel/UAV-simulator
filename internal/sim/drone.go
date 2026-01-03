@@ -57,22 +57,26 @@ type Drone struct {
 
 	// Internal state
 	PropSpeeds [4]float64 // Individual motor speeds (RPM)
-    MotorTempC [4]float64 // Motor temperatures
+	MotorTempC [4]float64 // Motor temperatures
 
-    // Engines (quad) — allows per-engine failures/derating
-    Engines []Engine
+	// Last-frame thrust metrics (for audio/telemetry)
+	lastVerticalThrustN    float64
+	lastMaxVerticalThrustN float64
 
-    // Damage state
-    Destroyed bool
+	// Engines (quad) — allows per-engine failures/derating
+	Engines []Engine
+
+	// Damage state
+	Destroyed bool
 
 	// PID controllers for stability
 	PitchPID    PIDController
 	RollPID     PIDController
 	YawPID      PIDController
-    AltitudePID PIDController
+	AltitudePID PIDController
 
-    // Rotational inertia about body axes (Ix, Iy, Iz)
-    Inertia Vec3
+	// Rotational inertia about body axes (Ix, Iy, Iz)
+	Inertia Vec3
 }
 
 type PIDController struct {
