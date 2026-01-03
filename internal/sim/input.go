@@ -121,10 +121,12 @@ func (i *InputHandler) ProcessInput(drone *Drone, camera *Camera, dt float64) {
 
 	// SAFETY CONTROLS (Essential for realistic drone operation)
 
-	// Arming sequence: Hold Space + Enter for 2 seconds (realistic safety procedure)
-	if i.IsKeyPressed(glfw.KeySpace) && i.IsKeyPressed(glfw.KeyEnter) {
+	// Arming sequence: Hold Space for 2 seconds (simple safety procedure)
+	if drone.IsArmed {
+		i.armingTime = 0.0
+	} else if i.IsKeyPressed(glfw.KeySpace) {
 		i.armingTime += dt
-		if i.armingTime >= 2.0 && !drone.IsArmed {
+		if i.armingTime >= 2.0 {
 			drone.Arm()
 			i.armingTime = 0.0
 		}

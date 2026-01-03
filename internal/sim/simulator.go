@@ -190,6 +190,12 @@ func (s *Simulator) Run(window *glfw.Window) {
 			steps++
 		}
 
+		if s.audio != nil {
+			if err := s.audio.Update(s.camera, s.drones); err != nil {
+				log.Fatal(err)
+			}
+		}
+
 		// Interpolation factor for rendering between last completed updates
 		alpha := float64(acc) / float64(target)
 		if alpha < 0 {
