@@ -404,18 +404,18 @@ func (s *Simulator) processInput(dt float64) {
 }
 
 func (s *Simulator) update(dt float64) {
-    // Swarm control influences followers
-    if s.swarm != nil {
-        s.swarm.Update(dt)
-    }
-    // Physics update for all drones
-    for _, d := range s.drones {
-        d.Update(dt)
-    }
-    // Resolve simple inter-drone collisions (sphere-sphere)
-    s.resolveDroneCollisions()
-    // Camera tracks the selected drone
-    s.camera.Update(s.activeDrone())
+	// Swarm control influences followers
+	if s.swarm != nil {
+		s.swarm.Update(dt)
+	}
+	// Physics update for all drones
+	for _, d := range s.drones {
+		d.Update(dt)
+	}
+	// Resolve simple inter-drone collisions (sphere-sphere)
+	s.resolveDroneCollisions()
+	// Camera tracks the selected drone
+	s.camera.Update(s.activeDrone())
 }
 
 // resolveDroneCollisions performs a simple sphere-sphere collision resolution
@@ -423,57 +423,61 @@ func (s *Simulator) update(dt float64) {
 // It adjusts positions to remove penetration and applies a normal impulse
 // with small restitution. O(N^2) for small swarms.
 func (s *Simulator) resolveDroneCollisions() {
-    n := len(s.drones)
-    if n < 2 { return }
-    restitution := 0.1 // slightly bouncy
-    for i := 0; i < n; i++ {
-        a := s.drones[i]
-        ra := droneRadius(a)
-        for j := i + 1; j < n; j++ {
-            b := s.drones[j]
-            rb := droneRadius(b)
-            // Horizontal-plane distance; allow slight vertical overlap tolerance
-            delta := b.Position.Sub(a.Position)
-            dist := delta.Length()
-            minDist := ra + rb
-            if dist <= 1e-6 {
-                // Prevent division by zero; nudge apart along x
-                delta = Vec3{X: minDist, Y: 0, Z: 0}
-                dist = minDist
-            }
-            if dist < minDist {
-                // Normalize normal
-                nrm := delta.Mul(1.0 / dist)
-                penetration := minDist - dist
-                // Positional correction: move both half the penetration
-                corr := nrm.Mul(0.5 * penetration)
-                a.Position = a.Position.Sub(corr)
-                b.Position = b.Position.Add(corr)
+	n := len(s.drones)
+	if n < 2 {
+		return
+	}
+	restitution := 0.1 // slightly bouncy
+	for i := 0; i < n; i++ {
+		a := s.drones[i]
+		ra := droneRadius(a)
+		for j := i + 1; j < n; j++ {
+			b := s.drones[j]
+			rb := droneRadius(b)
+			// Horizontal-plane distance; allow slight vertical overlap tolerance
+			delta := b.Position.Sub(a.Position)
+			dist := delta.Length()
+			minDist := ra + rb
+			if dist <= 1e-6 {
+				// Prevent division by zero; nudge apart along x
+				delta = Vec3{X: minDist, Y: 0, Z: 0}
+				dist = minDist
+			}
+			if dist < minDist {
+				// Normalize normal
+				nrm := delta.Mul(1.0 / dist)
+				penetration := minDist - dist
+				// Positional correction: move both half the penetration
+				corr := nrm.Mul(0.5 * penetration)
+				a.Position = a.Position.Sub(corr)
+				b.Position = b.Position.Add(corr)
 
-                // Relative velocity along normal
-                relV := (b.Velocity.Sub(a.Velocity)).Dot(nrm)
-                if relV < 0 { // approaching
-                    invMassA := 1.0 / a.Mass
-                    invMassB := 1.0 / b.Mass
-                    j := -(1.0 + restitution) * relV / (invMassA + invMassB)
-                    impulse := nrm.Mul(j)
-                    a.Velocity = a.Velocity.Sub(impulse.Mul(invMassA))
-                    b.Velocity = b.Velocity.Add(impulse.Mul(invMassB))
-                }
-                // Apply damage based on approach speed magnitude
-                speed := math.Abs(relV)
-                a.applyCollisionDamage(speed)
-                b.applyCollisionDamage(speed)
-            }
-        }
-    }
+				// Relative velocity along normal
+				relV := (b.Velocity.Sub(a.Velocity)).Dot(nrm)
+				if relV < 0 { // approaching
+					invMassA := 1.0 / a.Mass
+					invMassB := 1.0 / b.Mass
+					j := -(1.0 + restitution) * relV / (invMassA + invMassB)
+					impulse := nrm.Mul(j)
+					a.Velocity = a.Velocity.Sub(impulse.Mul(invMassA))
+					b.Velocity = b.Velocity.Add(impulse.Mul(invMassB))
+				}
+				// Apply damage based on approach speed magnitude
+				speed := math.Abs(relV)
+				a.applyCollisionDamage(speed)
+				b.applyCollisionDamage(speed)
+			}
+		}
+	}
 }
 
 func droneRadius(d *Drone) float64 {
-    // Use horizontal footprint; take max of half-length/half-width, scale slightly
-    r := 0.5 * math.Max(d.Dimensions.X, d.Dimensions.Y)
-    if r < 0.05 { r = 0.05 }
-    return r
+	// Use horizontal footprint; take max of half-length/half-width, scale slightly
+	r := 0.5 * math.Max(d.Dimensions.X, d.Dimensions.Y)
+	if r < 0.05 {
+		r = 0.05
+	}
+	return r
 }
 
 func (s *Simulator) render(window *glfw.Window) {
@@ -511,8 +515,8 @@ func (s *Simulator) render(window *glfw.Window) {
 
 // Render with interpolation factor alpha in [0,1]
 func (s *Simulator) renderInterpolated(window *glfw.Window, alpha float64) {
-    s.mu.RLock()
-    gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+	s.mu.RLock()
+	gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
 	width, height := window.GetFramebufferSize()
 	gl.Viewport(0, 0, int32(width), int32(height))
@@ -534,10 +538,10 @@ func (s *Simulator) renderInterpolated(window *glfw.Window, alpha float64) {
 		s.renderer.RenderDrone()
 	}
 
-    if s.uiVisible {
-        s.renderUI(width, height)
-    }
-    s.mu.RUnlock()
+	if s.uiVisible {
+		s.renderUI(width, height)
+	}
+	s.mu.RUnlock()
 }
 
 // RunHeadless executes fixed-step updates without creating a window.
@@ -585,7 +589,7 @@ func (s *Simulator) renderUI(width, height int) {
 	s.ui.DrawText(x, y, "DRONE STATUS", scaleHeader, Color{1, 1, 1, 1})
 	y += lineHeight * 2
 
-    // Status strings handled via cached builder to avoid per-frame allocations
+	// Status strings handled via cached builder to avoid per-frame allocations
 
 	// Battery status
 	batt := "OK"
@@ -605,8 +609,8 @@ func (s *Simulator) renderUI(width, height int) {
 	fps := int(s.fps + 0.5)
 	ms := int(s.lastDt*1000.0 + 0.5)
 
-    // Lines
-    s.ui.DrawText(x, y, s.topStatusText(), scaleBody, Color{0.9, 0.95, 1, 1})
+	// Lines
+	s.ui.DrawText(x, y, s.topStatusText(), scaleBody, Color{0.9, 0.95, 1, 1})
 	y += lineHeight
 	s.ui.DrawText(x, y, "SIM FPS "+itoa(fps)+" DT "+itoa(ms)+"MS", scaleBody, Color{0.9, 1, 0.9, 1})
 	y += lineHeight
@@ -648,23 +652,23 @@ func (s *Simulator) renderUI(width, height int) {
 	s.ui.DrawText(x, y, "BAT "+itoa(batPct)+"%  "+batt, scaleBody, batColor)
 	y += lineHeight
 
-    // Health summary: DESTROYED / DAMAGED / OK
-    healthText := "OK"
+	// Health summary: DESTROYED / DAMAGED / OK
+	healthText := "OK"
 	healthColor := Color{0.8, 1.0, 0.8, 1}
 	if s.activeDrone().Destroyed {
-        healthText = "DESTROYED"
+		healthText = "DESTROYED"
 		healthColor = Color{1.0, 0.35, 0.35, 1}
 	} else if len(s.activeDrone().Engines) > 0 {
 		for _, e := range s.activeDrone().Engines {
-            if !e.Functional || e.Efficiency < 0.99 {
-                healthText = "DAMAGED"
-                healthColor = Color{1.0, 0.8, 0.3, 1}
-                break
-            }
-        }
-    }
-    s.ui.DrawText(x, y, "HEALTH "+healthText, scaleBody, healthColor)
-    y += lineHeight
+			if !e.Functional || e.Efficiency < 0.99 {
+				healthText = "DAMAGED"
+				healthColor = Color{1.0, 0.8, 0.3, 1}
+				break
+			}
+		}
+	}
+	s.ui.DrawText(x, y, "HEALTH "+healthText, scaleBody, healthColor)
+	y += lineHeight
 	// Swarm debug (if active)
 	if s.swarm != nil {
 		// max follower distance and comms latency
@@ -755,12 +759,12 @@ func (s *Simulator) renderUI(width, height int) {
 		vals := make([]string, len(s.activeDrone().Engines))
 		cols := make([]Color, len(s.activeDrone().Engines))
 		for i, e := range s.activeDrone().Engines {
-            if !e.Functional || e.Efficiency <= 0.01 {
-                vals[i] = "FAIL"
-                cols[i] = Color{1.0, 0.35, 0.35, 1}
-            } else {
-                pct := int(e.Efficiency*100 + 0.5)
-                vals[i] = itoa(pct) + "%"
+			if !e.Functional || e.Efficiency <= 0.01 {
+				vals[i] = "FAIL"
+				cols[i] = Color{1.0, 0.35, 0.35, 1}
+			} else {
+				pct := int(e.Efficiency*100 + 0.5)
+				vals[i] = itoa(pct) + "%"
 				if pct >= 90 {
 					cols[i] = Color{0.8, 1.0, 0.8, 1}
 				} else if pct >= 50 {
@@ -772,7 +776,7 @@ func (s *Simulator) renderUI(width, height int) {
 		}
 		// Print in pairs per line
 		line := func(i, j int) {
-			text := "ENG "+itoa(i)+"/"+itoa(j)+" "+vals[i]+" "+vals[j]
+			text := "ENG " + itoa(i) + "/" + itoa(j) + " " + vals[i] + " " + vals[j]
 			// Draw the label and then overlay values in their colors
 			s.ui.DrawText(x, y, text, scaleBody, Color{1, 1, 1, 1})
 			// crude overlay colorization: redraw just values at approximate offsets
@@ -785,8 +789,12 @@ func (s *Simulator) renderUI(width, height int) {
 			// advance
 			y += lineHeight
 		}
-		if len(vals) >= 2 { line(0, 1) }
-		if len(vals) >= 4 { line(2, 3) }
+		if len(vals) >= 2 {
+			line(0, 1)
+		}
+		if len(vals) >= 4 {
+			line(2, 3)
+		}
 	}
 	// Camera parameters
 	switch s.camera.Mode {
@@ -809,58 +817,58 @@ func (s *Simulator) renderUI(width, height int) {
 
 	s.ui.Flush()
 	gl.Disable(gl.SCISSOR_TEST)
-    gl.Enable(gl.DEPTH_TEST)
+	gl.Enable(gl.DEPTH_TEST)
 }
 
 // topStatusText builds and caches the HUD's top status line to avoid
 // repeated allocations inside the render loop. It recomputes only when
 // the selected drone, drone count, armed state, flight mode, or camera mode changes.
 func (s *Simulator) topStatusText() string {
-    sel := s.selected
-    cnt := len(s.drones)
-    d := s.activeDrone()
-    armed := d != nil && d.IsArmed
-    mode := FlightModeManual
-    if d != nil {
-        mode = d.FlightMode
-    }
-    cam := s.camera.Mode
+	sel := s.selected
+	cnt := len(s.drones)
+	d := s.activeDrone()
+	armed := d != nil && d.IsArmed
+	mode := FlightModeManual
+	if d != nil {
+		mode = d.FlightMode
+	}
+	cam := s.camera.Mode
 
-    if s.uiTopLine != "" && s.uiTopSel == sel && s.uiTopCount == cnt && s.uiTopArmed == armed && s.uiTopMode == mode && s.uiTopCam == cam {
-        return s.uiTopLine
-    }
+	if s.uiTopLine != "" && s.uiTopSel == sel && s.uiTopCount == cnt && s.uiTopArmed == armed && s.uiTopMode == mode && s.uiTopCam == cam {
+		return s.uiTopLine
+	}
 
-    statusStr := "DISARM"
-    if armed {
-        statusStr = "ARM"
-    }
+	statusStr := "DISARM"
+	if armed {
+		statusStr = "ARM"
+	}
 
-    modeStr := "MAN"
-    switch mode {
-    case FlightModeAltitudeHold:
-        modeStr = "ALT"
-    case FlightModeHover:
-        modeStr = "HOV"
-    }
+	modeStr := "MAN"
+	switch mode {
+	case FlightModeAltitudeHold:
+		modeStr = "ALT"
+	case FlightModeHover:
+		modeStr = "HOV"
+	}
 
-    camStr := "FOL"
-    switch cam {
-    case CameraModeTopDown:
-        camStr = "TOP"
-    case CameraModeFPV:
-        camStr = "FPV"
-    }
+	camStr := "FOL"
+	switch cam {
+	case CameraModeTopDown:
+		camStr = "TOP"
+	case CameraModeFPV:
+		camStr = "FPV"
+	}
 
-    s.uiTopLine = "DRONE " + itoa(sel+1) + "/" + itoa(cnt) + "  " +
-        "STAT " + statusStr + "   " +
-        "MODE " + modeStr + "   " +
-        "CAM " + camStr
-    s.uiTopSel = sel
-    s.uiTopCount = cnt
-    s.uiTopArmed = armed
-    s.uiTopMode = mode
-    s.uiTopCam = cam
-    return s.uiTopLine
+	s.uiTopLine = "DRONE " + itoa(sel+1) + "/" + itoa(cnt) + "  " +
+		"STAT " + statusStr + "   " +
+		"MODE " + modeStr + "   " +
+		"CAM " + camStr
+	s.uiTopSel = sel
+	s.uiTopCount = cnt
+	s.uiTopArmed = armed
+	s.uiTopMode = mode
+	s.uiTopCam = cam
+	return s.uiTopLine
 }
 
 // Simple integer to string without fmt to avoid allocation overhead in UI loop
