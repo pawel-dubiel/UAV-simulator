@@ -1,7 +1,7 @@
 package sim
 
 import (
-    "math"
+	"math"
 )
 
 type FlightMode int
@@ -87,12 +87,12 @@ type PIDController struct {
 
 // Engine models a single rotor/prop unit.
 type Engine struct {
-    Position   Vec3    // Local position (X forward, Y up, Z right)
-    Spin       int     // +1 = CW, -1 = CCW (yaw torque sign)
-    Efficiency float64 // 0..1 multiplier for available thrust
-    Functional bool    // If false, produces no thrust
-    MaxThrust  float64 // N at 100% throttle per engine
-    Mass       float64 // kg mass allocated to motor/arm at this position
+	Position   Vec3    // Local position (X forward, Y up, Z right)
+	Spin       int     // +1 = CW, -1 = CCW (yaw torque sign)
+	Efficiency float64 // 0..1 multiplier for available thrust
+	Functional bool    // If false, produces no thrust
+	MaxThrust  float64 // N at 100% throttle per engine
+	Mass       float64 // kg mass allocated to motor/arm at this position
 }
 
 func NewDrone() *Drone {
@@ -164,10 +164,10 @@ func NewDrone() *Drone {
 	totalMaxThrust := 2.5 * d.Mass * 9.81
 	perMax := totalMaxThrust / 4.0
 	d.Engines = []Engine{
-		{Position: Vec3{X: armX, Y: 0, Z: armZ}, Spin: +1, Efficiency: 1.0, Functional: true, MaxThrust: perMax},  // front-right (CW)
-		{Position: Vec3{X: armX, Y: 0, Z: -armZ}, Spin: -1, Efficiency: 1.0, Functional: true, MaxThrust: perMax}, // front-left (CCW)
-		{Position: Vec3{X: -armX, Y: 0, Z: armZ}, Spin: -1, Efficiency: 1.0, Functional: true, MaxThrust: perMax}, // rear-right (CCW)
-		{Position: Vec3{X: -armX, Y: 0, Z: -armZ}, Spin: +1, Efficiency: 1.0, Functional: true, MaxThrust: perMax},// rear-left (CW)
+		{Position: Vec3{X: armX, Y: 0, Z: armZ}, Spin: +1, Efficiency: 1.0, Functional: true, MaxThrust: perMax},   // front-right (CW)
+		{Position: Vec3{X: armX, Y: 0, Z: -armZ}, Spin: -1, Efficiency: 1.0, Functional: true, MaxThrust: perMax},  // front-left (CCW)
+		{Position: Vec3{X: -armX, Y: 0, Z: armZ}, Spin: -1, Efficiency: 1.0, Functional: true, MaxThrust: perMax},  // rear-right (CCW)
+		{Position: Vec3{X: -armX, Y: 0, Z: -armZ}, Spin: +1, Efficiency: 1.0, Functional: true, MaxThrust: perMax}, // rear-left (CW)
 	}
 
 	// Allocate mass to engines and compute inertia
@@ -204,13 +204,11 @@ func (d *Drone) Update(dt float64) {
 	// Calculate forces
 	gravity := Vec3{0, -9.81 * d.Mass, 0} // F = mg
 
-    // Calculate thrust and engine-induced torque
-    thrust, motorTorque := d.calculateThrustAndTorque()
+	// Calculate thrust and engine-induced torque
+	thrust, motorTorque := d.calculateThrustAndTorque()
 
 	// Calculate drag (quadratic with velocity)
 	drag := d.calculateDrag()
-
-
 
 	// Apply flight envelope limits
 	d.enforceFlightEnvelope()
@@ -218,11 +216,18 @@ func (d *Drone) Update(dt float64) {
 	// Total force calculation (no arbitrary wind force; wind is in drag via air-relative velocity)
 	totalForce := gravity.Add(thrust).Add(drag)
 
+	altitudeCorrection := 0.0
 	// Apply altitude hold if enabled
-    if d.IsArmed && (d.FlightMode == FlightModeAltitudeHold || d.FlightMode == FlightModeHover) {
-        altitudeCorrection := d.calculateAltitudeCorrection(dt)
-        totalForce = totalForce.Add(Vec3{0, altitudeCorrection, 0})
-    }
+	if d.IsArmed && (d.FlightMode == FlightModeAltitudeHold || d.FlightMode == FlightModeHover) {
+		altitudeCorrection = d.calculateAltitudeCorrection(dt)
+		totalForce = totalForce.Add(Vec3{0, altitudeCorrection, 0})
+	}
+
+	d.lastVerticalThrustN = thrust.Y + altitudeCorrection
+	if d.lastVerticalThrustN < 0 {
+		d.lastVerticalThrustN = 0
+	}
+	d.lastMaxVerticalThrustN = d.maxVerticalThrustN()
 
 	// Calculate acceleration
 	acceleration := totalForce.Mul(1.0 / d.Mass)
@@ -310,50 +315,52 @@ func (d *Drone) Disarm() {
 
 // Calculate thrust and resulting body torque from all engines.
 func (d *Drone) calculateThrustAndTorque() (Vec3, Vec3) {
-    // Spin down props if off
-    if !d.IsArmed || d.ThrottlePercent <= 0 || len(d.Engines) == 0 {
-        for i := range d.PropSpeeds {
-            d.PropSpeeds[i] += (0 - d.PropSpeeds[i]) * 0.2
-        }
-        return Vec3{}, Vec3{}
-    }
+	// Spin down props if off
+	if !d.IsArmed || d.ThrottlePercent <= 0 || len(d.Engines) == 0 {
+		for i := range d.PropSpeeds {
+			d.PropSpeeds[i] += (0 - d.PropSpeeds[i]) * 0.2
+		}
+		return Vec3{}, Vec3{}
+	}
 
-    // Quadratic response curve
-    tf := d.ThrottlePercent / 100.0
-    tf = tf * tf
+	// Quadratic response curve
+	tf := d.ThrottlePercent / 100.0
+	tf = tf * tf
 
-    // Thrust is always along body-up; rotate to world using R = R_y * R_x * R_z
-    roll, pitch, yaw := d.Rotation.Z, d.Rotation.X, d.Rotation.Y
-    rot := RotationYMat4(yaw).Mul(RotationXMat4(pitch)).Mul(RotationZMat4(roll))
-    up := rot.MulDirection(Vec3{0, 1, 0})
+	// Thrust is always along body-up; rotate to world using R = R_y * R_x * R_z
+	roll, pitch, yaw := d.Rotation.Z, d.Rotation.X, d.Rotation.Y
+	rot := RotationYMat4(yaw).Mul(RotationXMat4(pitch)).Mul(RotationZMat4(roll))
+	up := rot.MulDirection(Vec3{0, 1, 0})
 
-    // Ground effect factor
-    ge := 1.0
-    if d.Position.Y < 2.0 {
-        ge = 1.0 + (0.15 * (2.0 - d.Position.Y) / 2.0)
-    }
+	// Ground effect factor
+	ge := 1.0
+	if d.Position.Y < 2.0 {
+		ge = 1.0 + (0.15 * (2.0 - d.Position.Y) / 2.0)
+	}
 
-    sumFy := 0.0
-    torque := Vec3{}
-    yawCoeff := 0.02
+	sumFy := 0.0
+	torque := Vec3{}
+	yawCoeff := 0.02
 
-    for i := 0; i < len(d.Engines) && i < len(d.PropSpeeds); i++ {
-        e := d.Engines[i]
-        eff := e.Efficiency
-        if !e.Functional { eff = 0 }
-        Fy := eff * tf * e.MaxThrust * ge
-        sumFy += Fy
-        // r x F with r=(x,0,z), F=(0,Fy,0) in local axes
-        torque.X += -e.Position.Z * Fy
-        torque.Z += e.Position.X * Fy
-        torque.Y += float64(e.Spin) * yawCoeff * Fy
+	for i := 0; i < len(d.Engines) && i < len(d.PropSpeeds); i++ {
+		e := d.Engines[i]
+		eff := e.Efficiency
+		if !e.Functional {
+			eff = 0
+		}
+		Fy := eff * tf * e.MaxThrust * ge
+		sumFy += Fy
+		// r x F with r=(x,0,z), F=(0,Fy,0) in local axes
+		torque.X += -e.Position.Z * Fy
+		torque.Z += e.Position.X * Fy
+		torque.Y += float64(e.Spin) * yawCoeff * Fy
 
-        targetRPM := eff * tf * 8000
-        d.PropSpeeds[i] += (targetRPM - d.PropSpeeds[i]) * 0.1
-    }
+		targetRPM := eff * tf * 8000
+		d.PropSpeeds[i] += (targetRPM - d.PropSpeeds[i]) * 0.1
+	}
 
-    thrust := up.Mul(sumFy)
-    return thrust, torque
+	thrust := up.Mul(sumFy)
+	return thrust, torque
 }
 
 // Calculate air resistance
@@ -378,25 +385,27 @@ func (d *Drone) calculateDrag() Vec3 {
 
 // Update power consumption and battery
 func (d *Drone) updatePowerSystem(dt float64) {
-    if !d.IsArmed {
-        d.PowerDraw = 2.0 // Idle power consumption
-        return
-    }
+	if !d.IsArmed {
+		d.PowerDraw = 2.0 // Idle power consumption
+		return
+	}
 
-    // Power based on throttle distributed across engines
-    throttleFactor := d.ThrottlePercent / 100.0
-    if len(d.Engines) == 0 {
-        d.PowerDraw = d.HoverPower + (d.MaxPower-d.HoverPower)*throttleFactor
-    } else {
-        basePer := d.HoverPower / 4.0
-        var p float64
-        for _, e := range d.Engines {
-            eff := e.Efficiency
-            if !e.Functional { eff = 0 }
-            p += basePer*eff + (d.MaxPower/4.0-basePer)*throttleFactor*eff
-        }
-        d.PowerDraw = p
-    }
+	// Power based on throttle distributed across engines
+	throttleFactor := d.ThrottlePercent / 100.0
+	if len(d.Engines) == 0 {
+		d.PowerDraw = d.HoverPower + (d.MaxPower-d.HoverPower)*throttleFactor
+	} else {
+		basePer := d.HoverPower / 4.0
+		var p float64
+		for _, e := range d.Engines {
+			eff := e.Efficiency
+			if !e.Functional {
+				eff = 0
+			}
+			p += basePer*eff + (d.MaxPower/4.0-basePer)*throttleFactor*eff
+		}
+		d.PowerDraw = p
+	}
 
 	// Additional power for high speeds and maneuvers
 	speed := d.Velocity.Length()
@@ -417,8 +426,8 @@ func (d *Drone) updatePowerSystem(dt float64) {
 
 // Check ground contact
 func (d *Drone) updateGroundContact() {
-    groundLevel := d.groundClearance()
-    d.OnGround = d.Position.Y <= groundLevel && math.Abs(d.Velocity.Y) < 0.1
+	groundLevel := d.groundClearance()
+	d.OnGround = d.Position.Y <= groundLevel && math.Abs(d.Velocity.Y) < 0.1
 }
 
 // Update air density with altitude
@@ -520,64 +529,80 @@ func (d *Drone) updateAngularMotion(dt float64) {
 
 // Damage application helpers
 func (d *Drone) Destroy() {
-    d.Destroyed = true
-    d.IsArmed = false
-    d.ThrottlePercent = 0
-    for i := range d.Engines {
-        d.Engines[i].Efficiency = 0
-        d.Engines[i].Functional = false
-    }
+	d.Destroyed = true
+	d.IsArmed = false
+	d.ThrottlePercent = 0
+	for i := range d.Engines {
+		d.Engines[i].Efficiency = 0
+		d.Engines[i].Functional = false
+	}
 }
 
 func (d *Drone) applyGroundImpactDamage(speed float64) {
-    if d.Destroyed { return }
-    switch {
-    case speed >= 4.0:
-        d.Destroy()
-    case speed >= 2.5:
-        // Fail the strongest engine
-        idx := d.strongestEngineIndex()
-        if idx >= 0 { d.FailEngine(idx) }
-    case speed >= 1.2:
-        d.degradeTopEngines(2, 0.2)
-    }
+	if d.Destroyed {
+		return
+	}
+	switch {
+	case speed >= 4.0:
+		d.Destroy()
+	case speed >= 2.5:
+		// Fail the strongest engine
+		idx := d.strongestEngineIndex()
+		if idx >= 0 {
+			d.FailEngine(idx)
+		}
+	case speed >= 1.2:
+		d.degradeTopEngines(2, 0.2)
+	}
 }
 
 func (d *Drone) applyCollisionDamage(speed float64) {
-    if d.Destroyed { return }
-    switch {
-    case speed >= 6.0:
-        d.Destroy()
-    case speed >= 3.0:
-        idx := d.strongestEngineIndex()
-        if idx >= 0 { d.FailEngine(idx) }
-    case speed >= 1.5:
-        d.degradeTopEngines(2, 0.25)
-    }
+	if d.Destroyed {
+		return
+	}
+	switch {
+	case speed >= 6.0:
+		d.Destroy()
+	case speed >= 3.0:
+		idx := d.strongestEngineIndex()
+		if idx >= 0 {
+			d.FailEngine(idx)
+		}
+	case speed >= 1.5:
+		d.degradeTopEngines(2, 0.25)
+	}
 }
 
 func (d *Drone) strongestEngineIndex() int {
-    best := -1
-    bestEff := -1.0
-    for i, e := range d.Engines {
-        if !e.Functional { continue }
-        if e.Efficiency > bestEff {
-            bestEff = e.Efficiency
-            best = i
-        }
-    }
-    return best
+	best := -1
+	bestEff := -1.0
+	for i, e := range d.Engines {
+		if !e.Functional {
+			continue
+		}
+		if e.Efficiency > bestEff {
+			bestEff = e.Efficiency
+			best = i
+		}
+	}
+	return best
 }
 
 func (d *Drone) degradeTopEngines(count int, frac float64) {
-    if count <= 0 { return }
-    for c := 0; c < count; c++ {
-        idx := d.strongestEngineIndex()
-        if idx < 0 { return }
-        eff := d.Engines[idx].Efficiency * (1.0 - frac)
-        if eff < 0.05 { eff = 0 }
-        d.SetEngineEfficiency(idx, eff)
-    }
+	if count <= 0 {
+		return
+	}
+	for c := 0; c < count; c++ {
+		idx := d.strongestEngineIndex()
+		if idx < 0 {
+			return
+		}
+		eff := d.Engines[idx].Efficiency * (1.0 - frac)
+		if eff < 0.05 {
+			eff = 0
+		}
+		d.SetEngineEfficiency(idx, eff)
+	}
 }
 
 func sanitizeFinite(x float64) float64 {
@@ -635,78 +660,102 @@ func (d *Drone) updatePIDController(pid *PIDController, setpoint, current float6
 
 // Apply torque for rotation control
 func (d *Drone) AddTorque(torque Vec3, dt float64) {
-    if !d.IsArmed {
-        return
-    }
+	if !d.IsArmed {
+		return
+	}
 
-    // Convert torque to angular acceleration
-    // Use per-axis inertia for more realistic response
-    Ix := d.Inertia.X
-    Iy := d.Inertia.Y
-    Iz := d.Inertia.Z
-    ax := 0.0
-    ay := 0.0
-    az := 0.0
-    if Ix > 0 { ax = torque.X / Ix }
-    if Iy > 0 { ay = torque.Y / Iy }
-    if Iz > 0 { az = torque.Z / Iz }
-    d.AngularVel = d.AngularVel.Add(Vec3{ax, ay, az}.Mul(dt))
+	// Convert torque to angular acceleration
+	// Use per-axis inertia for more realistic response
+	Ix := d.Inertia.X
+	Iy := d.Inertia.Y
+	Iz := d.Inertia.Z
+	ax := 0.0
+	ay := 0.0
+	az := 0.0
+	if Ix > 0 {
+		ax = torque.X / Ix
+	}
+	if Iy > 0 {
+		ay = torque.Y / Iy
+	}
+	if Iz > 0 {
+		az = torque.Z / Iz
+	}
+	d.AngularVel = d.AngularVel.Add(Vec3{ax, ay, az}.Mul(dt))
 }
 
 // RecomputeInertia recalculates the inertia tensor (diagonal approximation)
 // using a central rectangular prism for the body and point masses for engines.
 func (d *Drone) RecomputeInertia() {
-    // Remaining mass after subtracting engine masses is assigned to the body
-    mBody := d.Mass
-    for _, e := range d.Engines {
-        mBody -= e.Mass
-    }
-    if mBody < 0 { mBody = 0 }
+	// Remaining mass after subtracting engine masses is assigned to the body
+	mBody := d.Mass
+	for _, e := range d.Engines {
+		mBody -= e.Mass
+	}
+	if mBody < 0 {
+		mBody = 0
+	}
 
-    // Rectangular prism at origin, axes aligned with body
-    L := d.Dimensions.X // length (X)
-    W := d.Dimensions.Y // width  (Z-right axis extent)
-    H := d.Dimensions.Z // height (Y)
-    c := 1.0 / 12.0
-    Ix := c * mBody * (H*H + W*W)
-    Iy := c * mBody * (L*L + W*W)
-    Iz := c * mBody * (L*L + H*H)
+	// Rectangular prism at origin, axes aligned with body
+	L := d.Dimensions.X // length (X)
+	W := d.Dimensions.Y // width  (Z-right axis extent)
+	H := d.Dimensions.Z // height (Y)
+	c := 1.0 / 12.0
+	Ix := c * mBody * (H*H + W*W)
+	Iy := c * mBody * (L*L + W*W)
+	Iz := c * mBody * (L*L + H*H)
 
-    // Engines as point masses
-    for _, e := range d.Engines {
-        x, y, z := e.Position.X, e.Position.Y, e.Position.Z
-        m := e.Mass
-        Ix += m * (y*y + z*z)
-        Iy += m * (x*x + z*z)
-        Iz += m * (x*x + y*y)
-    }
+	// Engines as point masses
+	for _, e := range d.Engines {
+		x, y, z := e.Position.X, e.Position.Y, e.Position.Z
+		m := e.Mass
+		Ix += m * (y*y + z*z)
+		Iy += m * (x*x + z*z)
+		Iz += m * (x*x + y*y)
+	}
 
-    const minMOI = 1e-6
-    if Ix < minMOI { Ix = minMOI }
-    if Iy < minMOI { Iy = minMOI }
-    if Iz < minMOI { Iz = minMOI }
-    d.Inertia = Vec3{X: Ix, Y: Iy, Z: Iz}
+	const minMOI = 1e-6
+	if Ix < minMOI {
+		Ix = minMOI
+	}
+	if Iy < minMOI {
+		Iy = minMOI
+	}
+	if Iz < minMOI {
+		Iz = minMOI
+	}
+	d.Inertia = Vec3{X: Ix, Y: Iy, Z: Iz}
 }
 
 // Engine failure/derating APIs
 func (d *Drone) FailEngine(i int) {
-    if i < 0 || i >= len(d.Engines) { return }
-    d.Engines[i].Functional = false
-    d.Engines[i].Efficiency = 0
+	if i < 0 || i >= len(d.Engines) {
+		return
+	}
+	d.Engines[i].Functional = false
+	d.Engines[i].Efficiency = 0
 }
 
 func (d *Drone) RepairEngine(i int) {
-    if i < 0 || i >= len(d.Engines) { return }
-    d.Engines[i].Functional = true
-    d.Engines[i].Efficiency = 1
+	if i < 0 || i >= len(d.Engines) {
+		return
+	}
+	d.Engines[i].Functional = true
+	d.Engines[i].Efficiency = 1
 }
 
 func (d *Drone) SetEngineEfficiency(i int, eff float64) {
-    if i < 0 || i >= len(d.Engines) { return }
-    if eff < 0 { eff = 0 }
-    if eff > 1 { eff = 1 }
-    d.Engines[i].Efficiency = eff
-    d.Engines[i].Functional = eff > 0
+	if i < 0 || i >= len(d.Engines) {
+		return
+	}
+	if eff < 0 {
+		eff = 0
+	}
+	if eff > 1 {
+		eff = 1
+	}
+	d.Engines[i].Efficiency = eff
+	d.Engines[i].Functional = eff > 0
 }
 
 // Set flight mode
