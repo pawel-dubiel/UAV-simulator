@@ -4,40 +4,42 @@
 package sim
 
 import (
-    "fmt"
-    "strconv"
-    "time"
-    "sync"
-    "math"
+	"fmt"
+	"log"
+	"math"
+	"strconv"
+	"sync"
+	"time"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/glfw/v3.3/glfw"
 )
 
 type Simulator struct {
-    drones     []*Drone
-    selected   int
-    camera     *Camera
-    renderer   *Renderer
-    input      *InputHandler
-    lastTime   time.Time
-    ui         *UIRenderer
-    lastDt     float64
-    fps        float64
-    fpsHistory []float64
-    fpsIdx     int
-    uiVisible  bool
-    swarm      *Swarm
+	drones     []*Drone
+	selected   int
+	camera     *Camera
+	renderer   *Renderer
+	input      *InputHandler
+	lastTime   time.Time
+	ui         *UIRenderer
+	lastDt     float64
+	fps        float64
+	fpsHistory []float64
+	fpsIdx     int
+	uiVisible  bool
+	swarm      *Swarm
+	audio      *AudioSystem
 
-    mu         sync.RWMutex
+	mu sync.RWMutex
 
-    // Cached UI strings to avoid per-frame allocations
-    uiTopLine   string
-    uiTopSel    int
-    uiTopCount  int
-    uiTopArmed  bool
-    uiTopMode   FlightMode
-    uiTopCam    CameraMode
+	// Cached UI strings to avoid per-frame allocations
+	uiTopLine  string
+	uiTopSel   int
+	uiTopCount int
+	uiTopArmed bool
+	uiTopMode  FlightMode
+	uiTopCam   CameraMode
 }
 
 func (s *Simulator) activeDrone() *Drone {
@@ -118,13 +120,18 @@ func NewSimulatorHeadless() *Simulator {
 
 func (s *Simulator) Run(window *glfw.Window) {
 	s.input.SetupCallbacks(window)
+	s.initAudio()
+	if s.audio != nil {
+		defer s.audio.Close()
+	}
+	s.camera.Update(s.activeDrone())
 
 	fmt.Println("=== REALISTIC DRONE FLIGHT SIMULATOR ===")
 	fmt.Printf("Aircraft: Consumer Quadcopter (%.0fg)\n", s.activeDrone().Mass*1000)
 	fmt.Printf("Battery: %.0f%% | Status: DISARMED\n", s.activeDrone().BatteryPercent)
 	fmt.Println()
 	fmt.Println("SAFETY PROCEDURES:")
-	fmt.Println("  1. Hold SPACE + ENTER for 2 seconds to ARM")
+	fmt.Println("  1. Hold SPACE for 2 seconds to ARM")
 	fmt.Println("  2. ESC - Emergency DISARM")
 	fmt.Println("  3. H - Emergency hover")
 	fmt.Println()
@@ -222,64 +229,89 @@ func (s *Simulator) Run(window *glfw.Window) {
 // This reduces jitter and lets rendering fluctuate independently of simulation UPS.
 func (s *Simulator) RunDecoupled(window *glfw.Window) {
     s.input.SetupCallbacks(window)
-
-    fmt.Println("=== REALISTIC DRONE FLIGHT SIMULATOR (decoupled) ===")
-    fmt.Printf("Aircraft: Consumer Quadcopter (%.0fg)\n", s.activeDrone().Mass*1000)
-
-    target := time.Second / 120 // 120 Hz physics
-    stop := make(chan struct{})
-    // Physics loop
-    go func() {
-        ticker := time.NewTicker(target)
-        defer ticker.Stop()
-        for {
-            select {
-            case <-ticker.C:
-                s.mu.Lock()
-                s.update(target.Seconds())
-                s.mu.Unlock()
-            case <-stop:
-                return
-            }
-        }
-    }()
-
-    telemetryTimer := 0.0
-    prev := time.Now()
-
-    for !window.ShouldClose() {
-        now := time.Now()
-        frame := now.Sub(prev)
-        prev = now
-        dtFrame := frame.Seconds()
-
-        // FPS smoothing and history
-        s.lastDt = dtFrame
-        if dtFrame > 0 {
-            currentFPS := 1.0 / dtFrame
-            s.fps = s.fps*0.9 + currentFPS*0.1
-        }
-        s.fpsHistory[s.fpsIdx] = s.fps
-        s.fpsIdx = (s.fpsIdx + 1) % len(s.fpsHistory)
-
-        // Apply input under exclusive lock to avoid races with physics
-        s.mu.Lock()
-        s.processInput(target.Seconds())
-        s.mu.Unlock()
-
-        s.renderInterpolated(window, 0)
-
-        telemetryTimer += dtFrame
-        if telemetryTimer >= 2.0 {
-            s.displayTelemetry()
-            telemetryTimer = 0.0
-        }
-
-        window.SwapBuffers()
-        glfw.PollEvents()
+    s.initAudio()
+    if s.audio != nil {
+        defer s.audio.Close()
     }
+    s.camera.Update(s.activeDrone())
 
-    close(stop)
+	fmt.Println("=== REALISTIC DRONE FLIGHT SIMULATOR (decoupled) ===")
+	fmt.Printf("Aircraft: Consumer Quadcopter (%.0fg)\n", s.activeDrone().Mass*1000)
+
+	target := time.Second / 120 // 120 Hz physics
+	stop := make(chan struct{})
+	// Physics loop
+	go func() {
+		ticker := time.NewTicker(target)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				s.mu.Lock()
+				s.update(target.Seconds())
+				s.mu.Unlock()
+			case <-stop:
+				return
+			}
+		}
+	}()
+
+	telemetryTimer := 0.0
+	prev := time.Now()
+
+	for !window.ShouldClose() {
+		now := time.Now()
+		frame := now.Sub(prev)
+		prev = now
+		dtFrame := frame.Seconds()
+
+		// FPS smoothing and history
+		s.lastDt = dtFrame
+		if dtFrame > 0 {
+			currentFPS := 1.0 / dtFrame
+			s.fps = s.fps*0.9 + currentFPS*0.1
+		}
+		s.fpsHistory[s.fpsIdx] = s.fps
+		s.fpsIdx = (s.fpsIdx + 1) % len(s.fpsHistory)
+
+		// Apply input under exclusive lock to avoid races with physics
+		s.mu.Lock()
+		s.processInput(target.Seconds())
+		s.mu.Unlock()
+
+		if s.audio != nil {
+			s.mu.RLock()
+			err := s.audio.Update(s.camera, s.drones)
+			s.mu.RUnlock()
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
+
+		s.renderInterpolated(window, 0)
+
+		telemetryTimer += dtFrame
+		if telemetryTimer >= 2.0 {
+			s.displayTelemetry()
+			telemetryTimer = 0.0
+		}
+
+		window.SwapBuffers()
+		glfw.PollEvents()
+	}
+
+	close(stop)
+}
+
+func (s *Simulator) initAudio() {
+	if s.audio != nil {
+		return
+	}
+	audio, err := NewAudioSystem(len(s.drones))
+	if err != nil {
+		log.Fatal(err)
+	}
+	s.audio = audio
 }
 
 func (s *Simulator) displayTelemetry() {
