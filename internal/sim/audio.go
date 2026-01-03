@@ -72,9 +72,19 @@ func (a *AudioSystem) Update(camera *Camera, drones []*Drone) error {
 		if d == nil {
 			return fmt.Errorf("audio update: drone %d is nil", i)
 		}
-		avgRPM := averageRPM(d.PropSpeeds[:])
-		gain := rpmGain(avgRPM, d.IsArmed)
-		rate := rpmRate(avgRPM, a.baseRPM, d.IsArmed)
+		if d.lastMaxVerticalThrustN <= 0 {
+			return fmt.Errorf("audio update: drone %d has non-positive max vertical thrust", i)
+		}
+		norm := d.lastVerticalThrustN / d.lastMaxVerticalThrustN
+		if norm < 0 {
+			norm = 0
+		}
+		if norm > 1 {
+			norm = 1
+		}
+		effectiveRPM := audioMaxRPM * math.Sqrt(norm)
+		gain := rpmGain(effectiveRPM, d.IsArmed)
+		rate := rpmRate(effectiveRPM, a.baseRPM, d.IsArmed)
 		if err := a.backend.SetSource(i, d.Position.X, d.Position.Y, d.Position.Z, gain, rate); err != nil {
 			return err
 		}
