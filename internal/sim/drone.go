@@ -269,31 +269,31 @@ func (d *Drone) Update(dt float64) {
 // onto world up (Y), accounting for current pitch/roll. This prevents corners
 // from sinking below ground when the drone tilts.
 func (d *Drone) groundClearance() float64 {
-    // Local half-extents mapped to world axes: X=length, Y=height, Z=width
-    ex := d.Dimensions.X * 0.5
-    ey := d.Dimensions.Z * 0.5 // height mapped to local Y
-    ez := d.Dimensions.Y * 0.5
+	// Local half-extents mapped to world axes: X=length, Y=height, Z=width
+	ex := d.Dimensions.X * 0.5
+	ey := d.Dimensions.Z * 0.5 // height mapped to local Y
+	ez := d.Dimensions.Y * 0.5
 
-    // Euler order: Yaw (Y), then Pitch (X), then Roll (Z)
-    pitch := d.Rotation.X
-    roll := d.Rotation.Z
+	// Euler order: Yaw (Y), then Pitch (X), then Roll (Z)
+	pitch := d.Rotation.X
+	roll := d.Rotation.Z
 
-    cp := math.Cos(pitch)
-    sp := math.Sin(pitch)
-    sr := math.Sin(roll)
-    cr := math.Cos(roll)
+	cp := math.Cos(pitch)
+	sp := math.Sin(pitch)
+	sr := math.Sin(roll)
+	cr := math.Cos(roll)
 
-    // World Y components of local axes after rotation (see derivation):
-    rightY := cp * sr      // local X axis Y-projection
-    upY := cp * cr         // local Y axis Y-projection
-    fwdY := -sp            // local Z axis Y-projection
+	// World Y components of local axes after rotation (see derivation):
+	rightY := cp * sr // local X axis Y-projection
+	upY := cp * cr    // local Y axis Y-projection
+	fwdY := -sp       // local Z axis Y-projection
 
-    clearance := math.Abs(rightY)*ex + math.Abs(upY)*ey + math.Abs(fwdY)*ez
-    // Small padding to avoid z-fighting with ground plane
-    if clearance < 0 {
-        clearance = 0
-    }
-    return clearance
+	clearance := math.Abs(rightY)*ex + math.Abs(upY)*ey + math.Abs(fwdY)*ez
+	// Small padding to avoid z-fighting with ground plane
+	if clearance < 0 {
+		clearance = 0
+	}
+	return clearance
 }
 
 // Realistic throttle control (0-100%)
