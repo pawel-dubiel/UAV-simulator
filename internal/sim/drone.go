@@ -183,18 +183,20 @@ func NewDrone() *Drone {
 	// Derive inertia from body prism + engine point masses
 	d.RecomputeInertia()
 
-    return d
+	d.lastMaxVerticalThrustN = d.maxVerticalThrustN()
+
+	return d
 }
 
 func (d *Drone) Update(dt float64) {
-    // Capture previous state for interpolation before mutating
-    d.PrevPosition = d.Position
-    d.PrevRotation = d.Rotation
-    // If disarmed, cut thrust but continue physics (free-fall under gravity)
-    if !d.IsArmed {
-        d.ThrottlePercent = 0
-        d.PropSpeeds = [4]float64{0, 0, 0, 0}
-    }
+	// Capture previous state for interpolation before mutating
+	d.PrevPosition = d.Position
+	d.PrevRotation = d.Rotation
+	// If disarmed, cut thrust but continue physics (free-fall under gravity)
+	if !d.IsArmed {
+		d.ThrottlePercent = 0
+		d.PropSpeeds = [4]float64{0, 0, 0, 0}
+	}
 
 	// Update battery and power consumption
 	d.updatePowerSystem(dt)
@@ -477,26 +479,48 @@ func (d *Drone) calculateAltitudeCorrection(dt float64) float64 {
 	return 0
 }
 
+func (d *Drone) maxVerticalThrustN() float64 {
+	if len(d.Engines) == 0 {
+		return 0
+	}
+	ge := 1.0
+	if d.Position.Y < 2.0 {
+		ge = 1.0 + (0.15 * (2.0 - d.Position.Y) / 2.0)
+	}
+	sum := 0.0
+	for _, e := range d.Engines {
+		eff := e.Efficiency
+		if !e.Functional {
+			eff = 0
+		}
+		sum += eff * e.MaxThrust
+	}
+	if sum < 0 {
+		return 0
+	}
+	return sum * ge
+}
+
 // Ground collision handling
 func (d *Drone) handleGroundCollision() {
-    groundLevel := d.groundClearance()
-    if d.Position.Y < groundLevel {
-        // Capture pre-clamp downward speed for damage assessment
-        impactSpeed := 0.0
-        if d.Velocity.Y < 0 {
-            impactSpeed = -d.Velocity.Y
-        }
-        d.Position.Y = groundLevel
+	groundLevel := d.groundClearance()
+	if d.Position.Y < groundLevel {
+		// Capture pre-clamp downward speed for damage assessment
+		impactSpeed := 0.0
+		if d.Velocity.Y < 0 {
+			impactSpeed = -d.Velocity.Y
+		}
+		d.Position.Y = groundLevel
 
-        // Absorb landing impact
-        if impactSpeed > 2.0 {
-            // Hard landing - potential damage
-            d.Velocity.Y = 0
-            d.applyGroundImpactDamage(impactSpeed)
-        } else if impactSpeed > 0 {
-            // Soft landing
-            d.Velocity.Y = 0
-        }
+		// Absorb landing impact
+		if impactSpeed > 2.0 {
+			// Hard landing - potential damage
+			d.Velocity.Y = 0
+			d.applyGroundImpactDamage(impactSpeed)
+		} else if impactSpeed > 0 {
+			// Soft landing
+			d.Velocity.Y = 0
+		}
 
 		// Friction on ground
 		if d.OnGround {
