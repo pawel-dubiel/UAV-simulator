@@ -2,68 +2,56 @@ package sim_test
 
 import (
 	sim "drone-simulator/internal/sim"
+	"math"
 	"testing"
 )
 
-func TestSwarmArmingAndLeaderSwitch(t *testing.T) {
-	// Create leader + 2 followers
-	d0, d1, d2 := sim.NewDrone(), sim.NewDrone(), sim.NewDrone()
-	s := sim.NewSwarm([]*sim.Drone{d0, d1, d2})
-
-	// Initially disarmed
-	if d1.IsArmed || d2.IsArmed {
-		t.Fatalf("followers should start disarmed")
-	}
-
-	// Arm leader; followers should mirror after update
-	d0.Arm()
-	for i := 0; i < 20; i++ {
-		s.Update(0.01)
-	}
-	if !d1.IsArmed || !d2.IsArmed {
-		t.Fatalf("followers should arm with leader")
-	}
-
-	// Switch control to follower 1; it becomes leader logically
-	s.SetLeader(1)
-	// Move new leader position; ensure update doesn't overwrite leader's control
-	d1.Position = sim.Vec3{X: 10, Y: 5, Z: -3}
-	prevThr := 55.0
-	d1.SetThrottle(prevThr)
-	s.Update(0.01)
-	if d1.ThrottlePercent != prevThr {
-		t.Fatalf("leader throttle should not be overridden; got %v", d1.ThrottlePercent)
+func TestSwarmConfigValidation(t *testing.T) {
+	d0, d1 := sim.NewDrone(), sim.NewDrone()
+	cfg := swarmConfigForTest()
+	cfg.NeighborRadius = 0
+	if _, err := sim.NewSwarm([]*sim.Drone{d0, d1}, cfg, commConfigForTest()); err == nil {
+		t.Fatalf("expected error for invalid NeighborRadius")
 	}
 }
 
-func TestSwarmSetsAltitudeHoldOnFollowers(t *testing.T) {
-	d0, d1 := sim.NewDrone(), sim.NewDrone()
-	s := sim.NewSwarm([]*sim.Drone{d0, d1})
-	d0.Arm()
-	d0.Position.Y = 12.3
+func TestSwarmStabilityAndCohesion(t *testing.T) {
+	n := 8
+	drones := make([]*sim.Drone, 0, n)
+	for i := 0; i < n; i++ {
+		d := sim.NewDrone()
+		d.Position = sim.Vec3{X: float64(i%4) * 1.5, Y: 1.2, Z: float64(i/4) * 1.5}
+		d.SetFlightMode(sim.FlightModeAltitudeHold)
+		d.Arm()
+		drones = append(drones, d)
+	}
 
-	s.Update(0.02)
-	if d1.FlightMode != sim.FlightModeAltitudeHold {
-		t.Fatalf("expected follower in AltitudeHold, got %v", d1.FlightMode)
+	cfg := swarmConfigForTest()
+	s, err := sim.NewSwarm(drones, cfg, commConfigForTest())
+	if err != nil {
+		t.Fatalf("unexpected swarm init error: %v", err)
 	}
-	if d1.AltitudeHold != d0.Position.Y {
-		t.Fatalf("expected follower AltitudeHold=%v, got %v", d0.Position.Y, d1.AltitudeHold)
-	}
-}
 
-func TestSwarmLeashAndClamp(t *testing.T) {
-	d0, d1 := sim.NewDrone(), sim.NewDrone()
-	s := sim.NewSwarm([]*sim.Drone{d0, d1})
-	d0.Arm()
-	d1.Arm()
-	// Place follower far away
-	d1.Position = sim.Vec3{X: 500, Y: 500, Z: 500}
-	for i := 0; i < 20; i++ {
-		s.Update(0.05)
+	initialSpread := s.MaxDistanceFromCentroid()
+	maxSpread := initialSpread
+
+	dt := 0.01
+	steps := 1500
+	for i := 0; i < steps; i++ {
+		s.Update(dt)
+		for _, d := range drones {
+			d.Update(dt)
+		}
+		spread := s.MaxDistanceFromCentroid()
+		if spread > maxSpread {
+			maxSpread = spread
+		}
 	}
-	// After updates, follower should be brought near leader
-	dist := d1.Position.Sub(d0.Position).Length()
-	if dist > 90.0 {
-		t.Fatalf("follower too far after leash: %.2f m", dist)
+
+	if maxSpread > math.Max(8.0, initialSpread*2.0) {
+		t.Fatalf("swarm spread grew too much: initial %.2f max %.2f", initialSpread, maxSpread)
+	}
+	if s.AvgNeighborCount() < 1.0 {
+		t.Fatalf("expected at least one neighbor on average, got %.2f", s.AvgNeighborCount())
 	}
 }

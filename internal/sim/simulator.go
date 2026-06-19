@@ -62,12 +62,13 @@ func (s *Simulator) ActiveDrone() *Drone { return s.activeDrone() }
 func (s *Simulator) Drones() []*Drone { return s.drones }
 
 func NewSimulator() *Simulator {
-	// Create a small swarm (leader + followers)
+	// Create a small swarm
 	n := 20
 	drones := make([]*Drone, 0, n)
 	for i := 0; i < n; i++ {
 		d := NewDrone()
 		d.Position = Vec3{float64(i%2) * 1.5, 0.05, float64(i/2) * 1.5}
+		d.SetFlightMode(FlightModeAltitudeHold)
 		drones = append(drones, d)
 	}
 	camera := NewCamera()
@@ -85,7 +86,14 @@ func NewSimulator() *Simulator {
 		fpsIdx:     0,
 		uiVisible:  true,
 	}
-	s.swarm = NewSwarm(s.drones)
+	cfg := swarmConfig()
+	commCfg := commConfig()
+	swarm, err := NewSwarm(s.drones, cfg, commCfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+	swarm.SetObjectiveDrone(s.selected)
+	s.swarm = swarm
 	return s
 }
 
@@ -97,6 +105,7 @@ func NewSimulatorHeadless() *Simulator {
 	for i := 0; i < n; i++ {
 		d := NewDrone()
 		d.Position = Vec3{float64(i%2) * 1.5, 0.05, float64(i/2) * 1.5}
+		d.SetFlightMode(FlightModeAltitudeHold)
 		drones = append(drones, d)
 	}
 	camera := NewCamera()
@@ -114,7 +123,14 @@ func NewSimulatorHeadless() *Simulator {
 		fpsIdx:     0,
 		uiVisible:  false,
 	}
-	s.swarm = NewSwarm(s.drones)
+	cfg := swarmConfig()
+	commCfg := commConfig()
+	swarm, err := NewSwarm(s.drones, cfg, commCfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+	swarm.SetObjectiveDrone(s.selected)
+	s.swarm = swarm
 	return s
 }
 

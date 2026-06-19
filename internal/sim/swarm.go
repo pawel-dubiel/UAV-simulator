@@ -1,346 +1,382 @@
 package sim
 
 import (
+	"errors"
+	"fmt"
 	"math"
 )
 
-// Swarm coordinates simple follower behavior around a leader (index 0).
-// Followers maintain offsets around the leader and match altitude using the drone's PID.
+// SwarmConfig defines distributed swarm tuning values.
+type SwarmConfig struct {
+	NeighborRadius   float64
+	SeparationRadius float64
+	CohesionWeight   float64
+	AlignmentWeight  float64
+	SeparationWeight float64
+	VelocityDamping  float64
+	MaxAccel         float64
+	MaxTiltDeg       float64
+	MaxTiltRateDeg   float64
+	AttitudeKp       float64
+	AttitudeKd       float64
+	MaxTorque        float64
+	GoalWeight       float64
+	GoalRadius       float64
+}
+
+// Swarm coordinates decentralized swarm motion using local neighbor rules.
 type Swarm struct {
-    drones []*Drone
-    // simple broadcast of leader state with latency
-    simTime   float64
-    latency   float64
-    queue     []scheduledMsg
-    last      LeaderState
-    hasLast   bool
-    leaderIdx int
-    // per-follower control state for smoothing targets
-    ctrl map[int]*followerCtrlState
+	drones       []*Drone
+	cfg          SwarmConfig
+	comm         *CommSystem
+	ctrl         map[int]*swarmCtrlState
+	objectiveID  int
+	hasObjective bool
 }
 
-func NewSwarm(drones []*Drone) *Swarm {
-    return &Swarm{drones: drones, latency: 0.1, leaderIdx: 0, ctrl: make(map[int]*followerCtrlState)}
+// SwarmDiagnostics summarizes swarm and communication state.
+type SwarmDiagnostics struct {
+	Spread                        float64
+	AverageCommunicationNeighbors float64
+	OldestSnapshotAge             float64
+	PendingDeliveries             int
+	DeliveryAttempts              int
+	DroppedPackets                int
 }
 
-func (s *Swarm) SetLeader(idx int) {
-	if idx < 0 || idx >= len(s.drones) {
-		return
+// CommunicationLink describes one visible receiver-to-sender snapshot link.
+type CommunicationLink struct {
+	ReceiverID             int
+	SenderID               int
+	ReceiverPosition       Vec3
+	SenderSnapshotPosition Vec3
+	SnapshotAge            float64
+	MaxAge                 float64
+}
+
+// NewSwarm constructs a distributed swarm controller with explicit config.
+func NewSwarm(drones []*Drone, cfg SwarmConfig, commCfg CommConfig) (*Swarm, error) {
+	if len(drones) < 2 {
+		return nil, fmt.Errorf("swarm init: need at least 2 drones, got %d", len(drones))
 	}
-	s.leaderIdx = idx
+	if cfg.NeighborRadius <= 0 {
+		return nil, errors.New("swarm init: NeighborRadius must be > 0")
+	}
+	if cfg.SeparationRadius <= 0 {
+		return nil, errors.New("swarm init: SeparationRadius must be > 0")
+	}
+	if cfg.SeparationRadius >= cfg.NeighborRadius {
+		return nil, errors.New("swarm init: SeparationRadius must be < NeighborRadius")
+	}
+	if cfg.CohesionWeight <= 0 {
+		return nil, errors.New("swarm init: CohesionWeight must be > 0")
+	}
+	if cfg.AlignmentWeight < 0 {
+		return nil, errors.New("swarm init: AlignmentWeight must be >= 0")
+	}
+	if cfg.SeparationWeight <= 0 {
+		return nil, errors.New("swarm init: SeparationWeight must be > 0")
+	}
+	if cfg.VelocityDamping < 0 {
+		return nil, errors.New("swarm init: VelocityDamping must be >= 0")
+	}
+	if cfg.MaxAccel <= 0 {
+		return nil, errors.New("swarm init: MaxAccel must be > 0")
+	}
+	if cfg.MaxTiltDeg <= 0 {
+		return nil, errors.New("swarm init: MaxTiltDeg must be > 0")
+	}
+	if cfg.MaxTiltRateDeg <= 0 {
+		return nil, errors.New("swarm init: MaxTiltRateDeg must be > 0")
+	}
+	if cfg.AttitudeKp <= 0 {
+		return nil, errors.New("swarm init: AttitudeKp must be > 0")
+	}
+	if cfg.AttitudeKd <= 0 {
+		return nil, errors.New("swarm init: AttitudeKd must be > 0")
+	}
+	if cfg.MaxTorque <= 0 {
+		return nil, errors.New("swarm init: MaxTorque must be > 0")
+	}
+	if cfg.GoalWeight < 0 {
+		return nil, errors.New("swarm init: GoalWeight must be >= 0")
+	}
+	if cfg.GoalRadius < 0 {
+		return nil, errors.New("swarm init: GoalRadius must be >= 0")
+	}
+	for i, d := range drones {
+		if d == nil {
+			return nil, fmt.Errorf("swarm init: drone %d is nil", i)
+		}
+	}
+	comm, err := NewCommSystem(drones, commCfg)
+	if err != nil {
+		return nil, fmt.Errorf("swarm init: %w", err)
+	}
+	return &Swarm{drones: drones, cfg: cfg, comm: comm, ctrl: make(map[int]*swarmCtrlState), objectiveID: -1}, nil
 }
 
+// SetObjectiveDrone makes drones seek the selected drone when they have its snapshot.
+func (s *Swarm) SetObjectiveDrone(id int) {
+	if id < 0 || id >= len(s.drones) {
+		panic(fmt.Sprintf("swarm objective: drone %d out of range", id))
+	}
+	s.objectiveID = id
+	s.hasObjective = true
+}
+
+// ClearObjective disables the selected-drone swarm objective.
+func (s *Swarm) ClearObjective() {
+	s.objectiveID = -1
+	s.hasObjective = false
+}
+
+// Diagnostics returns aggregate swarm and communication metrics.
+func (s *Swarm) Diagnostics() SwarmDiagnostics {
+	comm := s.comm.Diagnostics()
+	return SwarmDiagnostics{
+		Spread:                        s.MaxDistanceFromCentroid(),
+		AverageCommunicationNeighbors: comm.AverageVisibleNeighbors,
+		OldestSnapshotAge:             comm.OldestSnapshotAge,
+		PendingDeliveries:             comm.PendingDeliveries,
+		DeliveryAttempts:              comm.DeliveryAttempts,
+		DroppedPackets:                comm.DroppedPackets,
+	}
+}
+
+// CommunicationLinks returns visible communication links for rendering.
+func (s *Swarm) CommunicationLinks() []CommunicationLink {
+	if s.comm == nil {
+		panic("swarm links: communication system is nil")
+	}
+	links := make([]CommunicationLink, 0)
+	for receiverID, receiver := range s.drones {
+		if receiver == nil {
+			panic(fmt.Sprintf("swarm links: drone %d is nil", receiverID))
+		}
+		for _, snapshot := range s.comm.NeighborsFor(receiverID) {
+			links = append(links, CommunicationLink{
+				ReceiverID:             receiverID,
+				SenderID:               snapshot.SenderID,
+				ReceiverPosition:       receiver.Position,
+				SenderSnapshotPosition: snapshot.Position,
+				SnapshotAge:            s.comm.now - snapshot.PublishTime,
+				MaxAge:                 s.comm.cfg.MaxAge,
+			})
+		}
+	}
+	return links
+}
+
+// Update applies local neighbor rules (cohesion, alignment, separation).
 func (s *Swarm) Update(dt float64) {
+	if dt <= 0 {
+		panic("swarm update: dt must be > 0")
+	}
 	if len(s.drones) == 0 {
 		return
 	}
-	s.simTime += dt
-	leader := s.drones[s.leaderIdx]
-
-	// Broadcast leader state with latency
-	msg := LeaderState{
-		Position:   leader.Position,
-		Velocity:   leader.Velocity,
-		Yaw:        leader.Rotation.Y,
-		FlightMode: leader.FlightMode,
-		Throttle:   leader.ThrottlePercent,
-		IsArmed:    leader.IsArmed,
+	if s.comm == nil {
+		panic("swarm update: communication system is nil")
 	}
-	s.queue = append(s.queue, scheduledMsg{deliverAt: s.simTime + s.latency, state: msg})
-	// Deliver due messages
-	for len(s.queue) > 0 && s.queue[0].deliverAt <= s.simTime {
-		s.last = s.queue[0].state
-		s.hasLast = true
-		s.queue = s.queue[1:]
-	}
+	s.comm.Update(dt, s.drones)
 
-	// Auto-arm/disarm followers to mirror leader's armed state
-	for i := 0; i < len(s.drones); i++ {
-		if i == s.leaderIdx {
-			continue
-		}
-		d := s.drones[i]
-		if s.last.IsArmed {
-			if !d.IsArmed {
-				d.Arm()
-			}
-		} else {
-			if d.IsArmed {
-				d.Disarm()
-			}
-		}
-	}
-
-	// Formation: circle around leader at radius R
-	R := 3.0
-	count := len(s.drones)
-	followers := count - 1
-	rank := 0
-    // Controller gains (cascaded: position -> velocity -> attitude)
-    // Outer loop: position error -> velocity target
-    kpPosV := 0.6 // m -> m/s
-    vMax := 3.0   // cap commanded lateral speed
-    // Middle loop: velocity error -> acceleration (maps to tilt)
-    kpVel := 1.1  // (m/s) -> m/s^2
-    kdVel := 0.6  // D on relative velocity
-    // Inner loop: attitude tracking -> torque
-    kpAtt := 4.0  // attitude P
-    kdAtt := 3.0  // rate damping
-    // Yaw loop
-    kpYaw := 1.2
-    kdYaw := 0.8
 	g := 9.81
-	base := leader.Position
-	lvel := leader.Velocity
-	lyaw := leader.Rotation.Y
-	if s.hasLast {
-		base = s.last.Position
-		lvel = s.last.Velocity
-		lyaw = s.last.Yaw
-	}
-	// Allow followers to form up only after leader starts moving horizontally
-	// or is clearly airborne. This prevents sliding to side before takeoff.
-	movingHoriz := math.Hypot(lvel.X, lvel.Z) > 0.2
-	airborne := !leader.OnGround && (leader.Position.Y > leader.Dimensions.Z/2.0+0.1)
-	allowFormation := movingHoriz || airborne
-	for i := 0; i < count; i++ {
-		if i == s.leaderIdx {
-			continue
+	maxTilt := s.cfg.MaxTiltDeg * math.Pi / 180.0
+	maxTiltRate := s.cfg.MaxTiltRateDeg * math.Pi / 180.0
+
+	for i, d := range s.drones {
+		if d == nil {
+			panic(fmt.Sprintf("swarm update: drone %d is nil", i))
 		}
-        follower := s.drones[i]
-        // Init follower control state if absent
-        st := s.ctrl[i]
-        if st == nil {
-            st = &followerCtrlState{prevPitch: follower.Rotation.X, prevRoll: follower.Rotation.Z}
-            s.ctrl[i] = st
-        }
-		angle := 0.0
-		if followers > 0 {
-			angle = 2 * math.Pi * float64(rank) / float64(followers)
-		}
-		offset := Vec3{R * math.Cos(angle), 0, R * math.Sin(angle)}
-		targetPos := base.Add(offset)
-            // Altitude follow: simple setpoint to leader altitude
-            follower.SetFlightMode(FlightModeAltitudeHold)
-            follower.AltitudeHold = base.Y
+		neighbors := 0
+		var sumPos Vec3
+		var sumVel Vec3
+		var separation Vec3
 
-		// Match altitude using altitude hold PID
-		follower.SetFlightMode(FlightModeAltitudeHold)
-		altTarget := leader.Position.Y
-		if s.hasLast {
-			altTarget = s.last.Position.Y
-		}
-            follower.AltitudeHold = altTarget
-
-        // Cascaded lateral control
-        // 1) Position -> velocity target (in leader frame)
-        ex := targetPos.X - follower.Position.X
-        ez := targetPos.Z - follower.Position.Z
-        vtx := clamp(kpPosV*ex, -vMax, vMax)
-        vtz := clamp(kpPosV*ez, -vMax, vMax)
-        // 2) Velocity error (relative to leader) -> acceleration command
-        vxRel := follower.Velocity.X - lvel.X
-        vzRel := follower.Velocity.Z - lvel.Z
-        ax := kpVel*(vtx-vxRel) - kdVel*vxRel
-        az := kpVel*(vtz-vzRel) - kdVel*vzRel
-        // Limit commanded acceleration to avoid aggressive tilts
-        maxAcc := 3.0
-        if ax > maxAcc { ax = maxAcc } else if ax < -maxAcc { ax = -maxAcc }
-        if az > maxAcc { az = maxAcc } else if az < -maxAcc { az = -maxAcc }
-        // 3) Acceleration -> tilt targets (small-angle assumption)
-        pitchCmd := clamp(-math.Atan2(az, g), -10*math.Pi/180, 10*math.Pi/180)
-        rollCmd  := clamp(math.Atan2(ax, g), -10*math.Pi/180, 10*math.Pi/180)
-        // Rate-limit tilt targets to avoid jitter/excitation
-        maxTiltRate := 120.0 * math.Pi / 180.0 // rad/s
-        pitchTarget := slew(st.prevPitch, pitchCmd, maxTiltRate, dt)
-        rollTarget  := slew(st.prevRoll,  rollCmd,  maxTiltRate, dt)
-        st.prevPitch = pitchTarget
-        st.prevRoll  = rollTarget
-
-        // Attitude PD tracking for pitch/roll (single objective: track tilt targets)
-        torqueX := kpAtt*(pitchTarget-follower.Rotation.X) - kdAtt*follower.AngularVel.X
-        torqueZ := kpAtt*(rollTarget-follower.Rotation.Z) - kdAtt*follower.AngularVel.Z
-        // Align yaw with leader
-        yawErr := angleDiff(lyaw, follower.Rotation.Y)
-        yawTorque := kpYaw*yawErr - kdYaw*follower.AngularVel.Y
-		// Additional gate: require follower to have some altitude clearance before allowing lateral control
-		followerClear := !follower.OnGround && (follower.Position.Y > follower.Dimensions.Z/2.0+0.2)
-		active := allowFormation && followerClear
-        // Additional altitude-based scaling to avoid tipping on/near ground
-        agl := follower.Position.Y - follower.groundClearance()
-        attScale := clamp((agl-0.05)/0.35, 0.0, 1.0)
-        if attScale < 0 { attScale = 0 }
-        torqueX *= attScale
-        torqueZ *= attScale
-        yawTorque *= clamp(attScale*1.2, 0.0, 1.0)
-
-        // If formation is not yet allowed or follower lacks clearance, keep calm and avoid lateral/yaw commands
-        if !active {
-            torqueX = 0
-            torqueZ = 0
-            yawTorque = 0
-            // Light lateral damping to prevent drift
-            follower.Velocity.X *= 0.95
-            follower.Velocity.Z *= 0.95
-        }
-        // Disable lateral torques while on ground to avoid skittering
-        if follower.OnGround {
-            torqueX = 0
-            torqueZ = 0
-        }
-        // Saturate torques to avoid violent angular accelerations
-        tMax := 0.35
-        if torqueX > tMax { torqueX = tMax } else if torqueX < -tMax { torqueX = -tMax }
-        if torqueZ > tMax { torqueZ = tMax } else if torqueZ < -tMax { torqueZ = -tMax }
-        if yawTorque > 0.25 { yawTorque = 0.25 } else if yawTorque < -0.25 { yawTorque = -0.25 }
-        follower.AddTorque(Vec3{X: torqueX, Y: yawTorque, Z: torqueZ}, dt)
-		// Gentle clamp toward slot and velocity damping when far
-		delta := follower.Position.Sub(targetPos)
-		if active {
-			if delta.Length() > 8.0 {
-				follower.Position = follower.Position.Sub(delta.Mul(0.25))
-				follower.Velocity = follower.Velocity.Mul(0.8)
-			}
-		} else {
-			// While waiting for leader motion, only pull in if very far from leader
-			if follower.Position.Sub(base).Length() > 20.0 {
-				follower.Position = follower.Position.Sub(delta.Mul(0.15))
-				follower.Velocity = follower.Velocity.Mul(0.85)
+		snapshots := s.comm.NeighborsFor(i)
+		for _, other := range snapshots {
+			dx := other.Position.X - d.Position.X
+			dz := other.Position.Z - d.Position.Z
+			dist := math.Hypot(dx, dz)
+			if dist <= s.cfg.NeighborRadius {
+				neighbors++
+				sumPos = sumPos.Add(other.Position)
+				sumVel = sumVel.Add(other.Velocity)
+				if dist <= s.cfg.SeparationRadius && dist > 1e-6 {
+					strength := (s.cfg.SeparationRadius - dist) / s.cfg.SeparationRadius
+					sep := Vec3{X: -dx / dist * strength, Y: 0, Z: -dz / dist * strength}
+					separation = separation.Add(sep)
+				}
 			}
 		}
-		// Hard leash to prevent runaway (always enabled)
-		if follower.Position.Sub(base).Length() > 80.0 {
-			follower.Position = targetPos
-			follower.Velocity = Vec3{}
-			follower.AngularVel = Vec3{}
+
+		var acc Vec3
+		if neighbors > 0 {
+			inv := 1.0 / float64(neighbors)
+			avgPos := sumPos.Mul(inv)
+			avgVel := sumVel.Mul(inv)
+			cohesion := avgPos.Sub(d.Position)
+			alignment := avgVel.Sub(d.Velocity)
+			cohesion.Y = 0
+			alignment.Y = 0
+			separation.Y = 0
+
+			acc = cohesion.Mul(s.cfg.CohesionWeight).
+				Add(alignment.Mul(s.cfg.AlignmentWeight)).
+				Add(separation.Mul(s.cfg.SeparationWeight))
 		}
-		rank++
+
+		if goal := s.goalAcceleration(i, d, snapshots); goal.Length() > 0 {
+			acc = acc.Add(goal)
+		}
+
+		acc = acc.Add(Vec3{X: -d.Velocity.X * s.cfg.VelocityDamping, Y: 0, Z: -d.Velocity.Z * s.cfg.VelocityDamping})
+		if acc.Length() > s.cfg.MaxAccel {
+			acc = acc.Normalize().Mul(s.cfg.MaxAccel)
+		}
+
+		pitchCmd := clamp(-math.Atan2(acc.Z, g), -maxTilt, maxTilt)
+		rollCmd := clamp(math.Atan2(acc.X, g), -maxTilt, maxTilt)
+
+		st := s.ctrl[i]
+		if st == nil {
+			st = &swarmCtrlState{prevPitch: d.Rotation.X, prevRoll: d.Rotation.Z}
+			s.ctrl[i] = st
+		}
+		pitchTarget := slew(st.prevPitch, pitchCmd, maxTiltRate, dt)
+		rollTarget := slew(st.prevRoll, rollCmd, maxTiltRate, dt)
+		st.prevPitch = pitchTarget
+		st.prevRoll = rollTarget
+
+		torqueX := s.cfg.AttitudeKp*(pitchTarget-d.Rotation.X) - s.cfg.AttitudeKd*d.AngularVel.X
+		torqueZ := s.cfg.AttitudeKp*(rollTarget-d.Rotation.Z) - s.cfg.AttitudeKd*d.AngularVel.Z
+
+		agl := d.Position.Y - d.groundClearance()
+		attScale := clamp((agl-0.05)/0.35, 0.0, 1.0)
+		torqueX *= attScale
+		torqueZ *= attScale
+
+		if d.OnGround {
+			torqueX = 0
+			torqueZ = 0
+		}
+
+		if torqueX > s.cfg.MaxTorque {
+			torqueX = s.cfg.MaxTorque
+		} else if torqueX < -s.cfg.MaxTorque {
+			torqueX = -s.cfg.MaxTorque
+		}
+		if torqueZ > s.cfg.MaxTorque {
+			torqueZ = s.cfg.MaxTorque
+		} else if torqueZ < -s.cfg.MaxTorque {
+			torqueZ = -s.cfg.MaxTorque
+		}
+
+		d.AddTorque(Vec3{X: torqueX, Y: 0, Z: torqueZ}, dt)
+
+		if d.IsArmed && (d.FlightMode == FlightModeAltitudeHold || d.FlightMode == FlightModeHover) {
+			altTarget := d.Position.Y
+			if neighbors > 0 {
+				altTarget = sumPos.Y / float64(neighbors)
+			}
+			d.AltitudeHold = altTarget
+		}
 	}
 }
 
-// followerCtrlState holds per-follower control memory for smoothing
-type followerCtrlState struct {
-    prevPitch float64
-    prevRoll  float64
-}
-
-// initializeFollower sets safe initial conditions on arming.
-// initializeFollower removed in simplified controller
-
-// Reform snaps followers back to formation slots around the latest known leader position
-// and resets their velocities/attitudes for recovery.
-func (s *Swarm) Reform() {
-	if len(s.drones) == 0 {
-		return
+func (s *Swarm) goalAcceleration(droneID int, d *Drone, snapshots []NeighborSnapshot) Vec3 {
+	if !s.hasObjective || s.cfg.GoalWeight == 0 || droneID == s.objectiveID {
+		return Vec3{}
 	}
-	leader := s.drones[s.leaderIdx]
-	base := leader.Position
-	if s.hasLast {
-		base = s.last.Position
-	}
-	n := len(s.drones)
-	followers := n - 1
-	rank := 0
-	R := 3.0
-	for i := 0; i < n; i++ {
-		if i == s.leaderIdx {
+	for _, snapshot := range snapshots {
+		if snapshot.SenderID != s.objectiveID {
 			continue
 		}
-		d := s.drones[i]
-		angle := 0.0
-		if followers > 0 {
-			angle = 2 * math.Pi * float64(rank) / float64(followers)
+		delta := snapshot.Position.Sub(d.Position)
+		delta.Y = 0
+		dist := delta.Length()
+		if dist <= s.cfg.GoalRadius || dist <= 1e-6 {
+			return Vec3{}
 		}
-		target := base.Add(Vec3{R * math.Cos(angle), 0, R * math.Sin(angle)})
-		d.Position = target
-		d.Velocity = Vec3{}
-		d.AngularVel = Vec3{}
-		d.Rotation = Vec3{0, s.last.Yaw, 0}
-        d.SetFlightMode(FlightModeAltitudeHold)
-        d.AltitudeHold = base.Y
-		rank++
+		return delta.Normalize().Mul(s.cfg.GoalWeight)
 	}
+	return Vec3{}
 }
 
-// MaxFollowerDistance returns the maximum distance of any follower from the leader.
-func (s *Swarm) MaxFollowerDistance() float64 {
+// MaxDistanceFromCentroid returns the maximum distance from swarm centroid.
+func (s *Swarm) MaxDistanceFromCentroid() float64 {
 	if len(s.drones) == 0 {
 		return 0
 	}
-	leader := s.drones[s.leaderIdx]
-	maxd := 0.0
+	centroid := Vec3{}
 	for i, d := range s.drones {
-		if i == s.leaderIdx {
-			continue
+		if d == nil {
+			panic(fmt.Sprintf("swarm metric: drone %d is nil", i))
 		}
-		dlen := d.Position.Sub(leader.Position).Length()
-		if dlen > maxd {
-			maxd = dlen
+		centroid = centroid.Add(d.Position)
+	}
+	centroid = centroid.Mul(1.0 / float64(len(s.drones)))
+	maxd := 0.0
+	for _, d := range s.drones {
+		dist := d.Position.Sub(centroid).Length()
+		if dist > maxd {
+			maxd = dist
 		}
 	}
 	return maxd
 }
 
-// MessageAge returns the time since the last leader state was delivered to followers.
-func (s *Swarm) MessageAge() float64 {
-	if !s.hasLast {
-		return math.Inf(1)
+// AvgNeighborCount returns the average number of neighbors per drone.
+func (s *Swarm) AvgNeighborCount() float64 {
+	if len(s.drones) == 0 {
+		return 0
 	}
-	// Next item in queue's delivery time minus current simTime doesn't help; we approximate
-	// by latency for now when we have a last message.
-	return s.latency
+	if s.comm == nil {
+		panic("swarm metric: communication system is nil")
+	}
+	total := 0
+	for i, d := range s.drones {
+		if d == nil {
+			panic(fmt.Sprintf("swarm metric: drone %d is nil", i))
+		}
+		count := 0
+		for _, other := range s.comm.NeighborsFor(i) {
+			dx := other.Position.X - d.Position.X
+			dz := other.Position.Z - d.Position.Z
+			if math.Hypot(dx, dz) <= s.cfg.NeighborRadius {
+				count++
+			}
+		}
+		total += count
+	}
+	return float64(total) / float64(len(s.drones))
+}
+
+// swarmCtrlState holds per-drone control memory for smoothing.
+type swarmCtrlState struct {
+	prevPitch float64
+	prevRoll  float64
 }
 
 func clamp(x, lo, hi float64) float64 {
-    if x < lo {
-        return lo
-    }
-    if x > hi {
-        return hi
-    }
-    return x
+	if x < lo {
+		return lo
+	}
+	if x > hi {
+		return hi
+	}
+	return x
 }
 
 // slew limits the rate of change from prev toward target by maxRate (units/sec)
 func slew(prev, target, maxRate, dt float64) float64 {
-    maxDelta := maxRate * dt
-    delta := target - prev
-    if delta > maxDelta {
-        delta = maxDelta
-    } else if delta < -maxDelta {
-        delta = -maxDelta
-    }
-    return prev + delta
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
+	maxDelta := maxRate * dt
+	delta := target - prev
+	if delta > maxDelta {
+		delta = maxDelta
+	} else if delta < -maxDelta {
+		delta = -maxDelta
 	}
-	return b
-}
-
-type LeaderState struct {
-	Position   Vec3
-	Velocity   Vec3
-	Yaw        float64
-	FlightMode FlightMode
-	Throttle   float64
-	IsArmed    bool
-}
-
-type scheduledMsg struct {
-	deliverAt float64
-	state     LeaderState
-}
-
-func angleDiff(target, current float64) float64 {
-	d := target - current
-	for d > math.Pi {
-		d -= 2 * math.Pi
-	}
-	for d < -math.Pi {
-		d += 2 * math.Pi
-	}
-	return d
+	return prev + delta
 }
