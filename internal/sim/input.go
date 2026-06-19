@@ -176,10 +176,18 @@ func (i *InputHandler) ProcessInput(drone *Drone, camera *Camera, dt float64) {
 		// Fail engine
 		drone.FailEngine(idx)
 	}
-	if i.WasKeyPressed(glfw.KeyF5) { cycle(0) }
-	if i.WasKeyPressed(glfw.KeyF6) { cycle(1) }
-	if i.WasKeyPressed(glfw.KeyF7) { cycle(2) }
-	if i.WasKeyPressed(glfw.KeyF8) { cycle(3) }
+	if i.WasKeyPressed(glfw.KeyF5) {
+		cycle(0)
+	}
+	if i.WasKeyPressed(glfw.KeyF6) {
+		cycle(1)
+	}
+	if i.WasKeyPressed(glfw.KeyF7) {
+		cycle(2)
+	}
+	if i.WasKeyPressed(glfw.KeyF8) {
+		cycle(3)
+	}
 	// F9 repairs all
 	if i.WasKeyPressed(glfw.KeyF9) {
 		for idx := range drone.Engines {

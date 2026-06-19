@@ -150,6 +150,7 @@ func (s *Simulator) Run(window *glfw.Window) {
 	fmt.Println("  1. Hold SPACE for 2 seconds to ARM")
 	fmt.Println("  2. ESC - Emergency DISARM")
 	fmt.Println("  3. H - Emergency hover")
+	fmt.Println("  F2 - Arm all  F3 - Disarm all")
 	fmt.Println()
 	fmt.Println("FLIGHT CONTROLS (selected drone):")
 	fmt.Println("  W/S - Throttle up/down (gradual)")
@@ -244,12 +245,12 @@ func (s *Simulator) Run(window *glfw.Window) {
 // RunDecoupled runs physics in a fixed-rate goroutine and renders on the main thread.
 // This reduces jitter and lets rendering fluctuate independently of simulation UPS.
 func (s *Simulator) RunDecoupled(window *glfw.Window) {
-    s.input.SetupCallbacks(window)
-    s.initAudio()
-    if s.audio != nil {
-        defer s.audio.Close()
-    }
-    s.camera.Update(s.activeDrone())
+	s.input.SetupCallbacks(window)
+	s.initAudio()
+	if s.audio != nil {
+		defer s.audio.Close()
+	}
+	s.camera.Update(s.activeDrone())
 
 	fmt.Println("=== REALISTIC DRONE FLIGHT SIMULATOR (decoupled) ===")
 	fmt.Printf("Aircraft: Consumer Quadcopter (%.0fg)\n", s.activeDrone().Mass*1000)
@@ -392,6 +393,17 @@ func (s *Simulator) processInput(dt float64) {
 	if s.input.WasKeyPressed(glfw.KeyF1) {
 		s.uiVisible = !s.uiVisible
 	}
+	// Arm/disarm all for quick testing
+	if s.input.WasKeyPressed(glfw.KeyF2) {
+		for _, d := range s.drones {
+			d.Arm()
+		}
+	}
+	if s.input.WasKeyPressed(glfw.KeyF3) {
+		for _, d := range s.drones {
+			d.Disarm()
+		}
+	}
 	// Cycle selected drone for control and camera focus
 	if s.input.WasKeyPressed(glfw.KeyLeftBracket) {
 		s.selected--
@@ -399,7 +411,7 @@ func (s *Simulator) processInput(dt float64) {
 			s.selected = len(s.drones) - 1
 		}
 		if s.swarm != nil {
-			s.swarm.SetLeader(s.selected)
+			s.swarm.SetObjectiveDrone(s.selected)
 		}
 	}
 	if s.input.WasKeyPressed(glfw.KeyRightBracket) {
@@ -408,19 +420,13 @@ func (s *Simulator) processInput(dt float64) {
 			s.selected = 0
 		}
 		if s.swarm != nil {
-			s.swarm.SetLeader(s.selected)
-		}
-	}
-	// Re-form swarm in case of dispersion
-	if s.input.WasKeyPressed(glfw.KeyR) {
-		if s.swarm != nil {
-			s.swarm.Reform()
+			s.swarm.SetObjectiveDrone(s.selected)
 		}
 	}
 }
 
 func (s *Simulator) update(dt float64) {
-	// Swarm control influences followers
+	// Swarm control influences drones
 	if s.swarm != nil {
 		s.swarm.Update(dt)
 	}
@@ -697,12 +703,15 @@ func (s *Simulator) renderUI(width, height int) {
 	y += lineHeight
 	// Swarm debug (if active)
 	if s.swarm != nil {
-		// max follower distance and comms latency
-		maxd := int(s.swarm.MaxFollowerDistance() + 0.5)
-		ageMs := int(s.swarm.MessageAge()*1000 + 0.5)
-		s.ui.DrawText(x, y, "SWARM N "+itoa(len(s.drones))+"  FAR "+itoa(maxd)+"M  AGE "+itoa(ageMs)+"MS", scaleBody, Color{0.9, 1, 0.95, 1})
+		diag := s.swarm.Diagnostics()
+		spread := int(diag.Spread + 0.5)
+		neigh := int(diag.AverageCommunicationNeighbors + 0.5)
+		s.ui.DrawText(x, y, "SWARM N "+itoa(len(s.drones))+"  SPREAD "+itoa(spread)+"M  NEI "+itoa(neigh), scaleBody, Color{0.9, 1, 0.95, 1})
 		y += lineHeight
-		s.ui.DrawText(x, y, "REFORM: R  SELECT: [ ]", scaleBody, Color{0.9, 0.95, 1, 1})
+		ageMs := int(diag.OldestSnapshotAge*1000 + 0.5)
+		s.ui.DrawText(x, y, "COM V "+fmt1(diag.AverageCommunicationNeighbors)+" P "+itoa(diag.PendingDeliveries)+" D "+itoa(diag.DroppedPackets)+"/"+itoa(diag.DeliveryAttempts)+" A "+itoa(ageMs)+"MS", scaleBody, Color{0.8, 1, 1, 1})
+		y += lineHeight
+		s.ui.DrawText(x, y, "SELECT: [ ]  ARM ALL: F2  DISARM ALL: F3", scaleBody, Color{0.9, 0.95, 1, 1})
 		y += lineHeight
 	}
 	s.ui.DrawText(x, y, "THR "+itoa(throttle)+"%   PWR "+itoa(power)+"W", scaleBody, Color{1, 0.95, 0.8, 1})
@@ -895,6 +904,36 @@ func (s *Simulator) topStatusText() string {
 	s.uiTopMode = mode
 	s.uiTopCam = cam
 	return s.uiTopLine
+}
+
+func swarmConfig() SwarmConfig {
+	return SwarmConfig{
+		NeighborRadius:   6.0,
+		SeparationRadius: 1.5,
+		CohesionWeight:   0.8,
+		AlignmentWeight:  0.6,
+		SeparationWeight: 1.2,
+		VelocityDamping:  0.4,
+		MaxAccel:         3.0,
+		MaxTiltDeg:       12.0,
+		MaxTiltRateDeg:   120.0,
+		AttitudeKp:       4.0,
+		AttitudeKd:       3.0,
+		MaxTorque:        0.35,
+		GoalWeight:       1.5,
+		GoalRadius:       2.0,
+	}
+}
+
+func commConfig() CommConfig {
+	return CommConfig{
+		Range:          6.0,
+		Latency:        0.02,
+		MaxAge:         0.5,
+		LossMode:       LossModeNone,
+		PacketLossRate: 0,
+		LossSeed:       0,
+	}
 }
 
 // Simple integer to string without fmt to avoid allocation overhead in UI loop
