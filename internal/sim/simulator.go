@@ -514,6 +514,11 @@ func (s *Simulator) render(window *glfw.Window) {
 	s.renderer.SetMatrices(groundModel, view, projection)
 	s.renderer.RenderGround()
 
+	if s.swarm != nil {
+		s.renderer.SetMatrices(IdentityMat4(), view, projection)
+		s.renderer.RenderLines(BuildCommunicationLineVertices(s.swarm.CommunicationLinks()))
+	}
+
 	// Render all drones
 	for idx, d := range s.drones {
 		droneModel := d.GetTransformMatrix()
@@ -546,6 +551,11 @@ func (s *Simulator) renderInterpolated(window *glfw.Window, alpha float64) {
 	groundModel := TranslationMat4(Vec3{X: s.camera.Target.X, Y: 0, Z: s.camera.Target.Z})
 	s.renderer.SetMatrices(groundModel, view, projection)
 	s.renderer.RenderGround()
+
+	if s.swarm != nil {
+		s.renderer.SetMatrices(IdentityMat4(), view, projection)
+		s.renderer.RenderLines(BuildCommunicationLineVertices(s.swarm.CommunicationLinks()))
+	}
 
 	// Drones (interpolated)
 	for _, d := range s.drones {

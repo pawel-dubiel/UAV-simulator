@@ -79,6 +79,8 @@ type Renderer struct {
 	shaderProgram uint32
 	cubeVAO       uint32
 	groundVAO     uint32
+	lineVAO       uint32
+	lineVBO       uint32
 	modelLoc      int32
 	viewLoc       int32
 	projectionLoc int32
@@ -220,16 +222,26 @@ func (r *Renderer) initGeometry() {
 	gl.EnableVertexAttribArray(0)
 	gl.VertexAttribPointer(1, 3, gl.FLOAT, false, 6*4, gl.PtrOffset(3*4))
 	gl.EnableVertexAttribArray(1)
+
+	gl.GenVertexArrays(1, &r.lineVAO)
+	gl.GenBuffers(1, &r.lineVBO)
+	gl.BindVertexArray(r.lineVAO)
+	gl.BindBuffer(gl.ARRAY_BUFFER, r.lineVBO)
+	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, 6*4, gl.PtrOffset(0))
+	gl.EnableVertexAttribArray(0)
+	gl.VertexAttribPointer(1, 3, gl.FLOAT, false, 6*4, gl.PtrOffset(3*4))
+	gl.EnableVertexAttribArray(1)
+	gl.BindVertexArray(0)
 }
 
 func (r *Renderer) SetMatrices(model, view, projection Mat4) {
-    gl.UseProgram(r.shaderProgram)
-    m32 := toGLMat4(model)
-    v32 := toGLMat4(view)
-    p32 := toGLMat4(projection)
-    gl.UniformMatrix4fv(r.modelLoc, 1, false, &m32[0])
-    gl.UniformMatrix4fv(r.viewLoc, 1, false, &v32[0])
-    gl.UniformMatrix4fv(r.projectionLoc, 1, false, &p32[0])
+	gl.UseProgram(r.shaderProgram)
+	m32 := toGLMat4(model)
+	v32 := toGLMat4(view)
+	p32 := toGLMat4(projection)
+	gl.UniformMatrix4fv(r.modelLoc, 1, false, &m32[0])
+	gl.UniformMatrix4fv(r.viewLoc, 1, false, &v32[0])
+	gl.UniformMatrix4fv(r.projectionLoc, 1, false, &p32[0])
 }
 
 func (r *Renderer) RenderDrone() {
@@ -257,17 +269,39 @@ func (r *Renderer) RenderGround() {
 	gl.DrawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, gl.PtrOffset(0))
 }
 
+func (r *Renderer) RenderLines(vertices []LineVertex) {
+	if len(vertices) == 0 {
+		return
+	}
+	data := make([]float32, 0, len(vertices)*6)
+	for _, v := range vertices {
+		data = append(data,
+			float32(v.Position.X), float32(v.Position.Y), float32(v.Position.Z),
+			v.Color.R, v.Color.G, v.Color.B,
+		)
+	}
+
+	gl.BindVertexArray(r.lineVAO)
+	gl.BindBuffer(gl.ARRAY_BUFFER, r.lineVBO)
+	gl.BufferData(gl.ARRAY_BUFFER, len(data)*4, gl.Ptr(data), gl.DYNAMIC_DRAW)
+	gl.UseProgram(r.shaderProgram)
+	gl.Uniform1i(r.useCheckerLoc, 0)
+	gl.LineWidth(2.0)
+	gl.DrawArrays(gl.LINES, 0, int32(len(vertices)))
+	gl.BindVertexArray(0)
+}
+
 func (r *Renderer) SetCamera(pos Vec3) {
-    r.cameraPos = pos
+	r.cameraPos = pos
 }
 
 // toGLMat4 converts a float64 Mat4 to a float32 array suitable for OpenGL.
 func toGLMat4(m Mat4) [16]float32 {
-    var out [16]float32
-    for i := 0; i < 16; i++ {
-        out[i] = float32(m[i])
-    }
-    return out
+	var out [16]float32
+	for i := 0; i < 16; i++ {
+		out[i] = float32(m[i])
+	}
+	return out
 }
 
 func compileShader(source string, shaderType uint32) uint32 {
